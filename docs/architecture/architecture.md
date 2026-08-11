@@ -520,6 +520,8 @@ docs/
 
 Use one repository and shared packages. Separate deployment units are justified only by runtime behavior: the collector is always on, Spark processes streams, the trading core owns decisions and risk, the execution gateway owns private exchange I/O, and Airflow runs bounded workflows. They do not need separate repositories or independent platform teams.
 
+The scaffold is documented from the root [README](../../README.md). Each folder contains a local README defining what belongs there, what does not, and how it interacts with neighboring components.
+
 ## 10. Implementation phases
 
 Each phase ends with a working, demonstrable system. Do not begin the next phase until its acceptance criteria pass.
