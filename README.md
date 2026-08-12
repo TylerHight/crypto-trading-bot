@@ -39,6 +39,18 @@ apps  jobs  analytics  orchestration
 
 The same code and container images should work in both environments. Configuration maps local Kafka, MinIO, DuckDB, and PostgreSQL to Amazon MSK, S3, Athena/Glue, and RDS. Cloud-specific SDK calls belong in adapters or infrastructure, not in domain or transformation code.
 
+## Run the current application
+
+The currently implemented application is the Coinbase market-trade collector. Start its Kafka dependency with Podman Compose, then run the collector from a separate PowerShell terminal:
+
+```powershell
+podman machine start
+podman compose up -d
+.\.venv\Scripts\crypto-collector.exe
+```
+
+Kafka UI is available at <http://localhost:8083>. See the [local dependency guide](infra/compose/README.md) for verification, event-consumer, shutdown, and reset commands.
+
 ## Repository conventions
 
 - Store no credentials, account identifiers, or private market data in Git.
