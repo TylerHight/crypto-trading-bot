@@ -1,0 +1,5 @@
+[tool.uv.workspace]
+members = [
+    "apps/collector",
+    "packages/exchange_adapters",
+]

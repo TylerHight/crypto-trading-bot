@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/market.trade.raw.v1.json",
+  "title": "Market Trade Raw Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "event_type",
+    "schema_version",
+    "exchange",
+    "symbol",
+    "event_time",
+    "ingested_at",
+    "source_event_id",
+    "source_sequence",
+    "producer",
+    "trace_id",
+    "correlation_id",
+    "causation_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_type": {
+      "const": "market.trade.raw"
+    },
+    "schema_version": {
+      "const": "v1"
+    },
+    "exchange": {
+      "type": "string",
+      "minLength": 1
+    },
+    "symbol": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "ingested_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "source_event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_sequence": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "producer": {
+      "const": "apps.collector"
+    },
+    "trace_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "correlation_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "causation_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}

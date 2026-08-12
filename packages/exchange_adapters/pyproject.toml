@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crypto-exchange-adapters"
+version = "0.1.0"
+description = "Exchange-specific clients and payload normalizers"
+requires-python = ">=3.11"
+dependencies = [
+    "websockets>=14,<16",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/crypto_exchange_adapters"]

@@ -236,6 +236,7 @@ exchange
 symbol
 event_time
 ingested_at
+source_event_id
 source_sequence
 producer
 trace_id
@@ -245,6 +246,10 @@ payload
 ```
 
 Use UTC timestamps and retain both `event_time` and `ingested_at`. Event time drives market calculations; ingestion time measures pipeline delay and helps diagnose late data.
+
+`source_event_id` is the provider's stable identifier for an individual fact and is
+used to derive a deterministic `event_id`. `source_sequence` is separate ordering
+metadata used for gap detection and may be null when a feed does not provide it.
 
 Commands request an action, such as `SubmitOrder`; events state facts, such as `OrderAccepted` or `FillReceived`. Facts are never rewritten. Corrections are represented by new events and reflected in PostgreSQL and analytical projections.
 
