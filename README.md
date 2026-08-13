@@ -1,6 +1,6 @@
 # Crypto Trading and Data Platform
 
-This repository is a local-first, AWS-portable crypto market-data and automated-trading platform. The current scaffold defines ownership boundaries before implementation begins. The proposed system and delivery phases are documented in [the architecture](docs/architecture/architecture.md).
+This repository is a local-first, AWS-portable crypto market-data and automated-trading platform. The current walking skeleton collects Coinbase trades, transports them through Kafka, and archives byte-preserving raw records as Parquet in MinIO. The proposed system and later delivery phases are documented in [the architecture](docs/architecture/architecture.md).
 
 ## Repository map
 
@@ -39,17 +39,22 @@ apps  jobs  analytics  orchestration
 
 The same code and container images should work in both environments. Configuration maps local Kafka, MinIO, DuckDB, and PostgreSQL to Amazon MSK, S3, Athena/Glue, and RDS. Cloud-specific SDK calls belong in adapters or infrastructure, not in domain or transformation code.
 
-## Run the current application
+## Run the current pipeline
 
-The currently implemented application is the Coinbase market-trade collector. Start its Kafka dependency with Podman Compose, then run the collector from a separate PowerShell terminal:
+Start the Podman machine and the complete local pipeline:
 
 ```powershell
 podman machine start
-podman compose up -d
-.\.venv\Scripts\crypto-collector.exe
+podman compose up -d --build
+podman compose ps
 ```
 
-Kafka UI is available at <http://localhost:8083>. See the [local dependency guide](infra/compose/README.md) for verification, event-consumer, shutdown, and reset commands.
+The stack includes the collector, Kafka, a checkpointed Spark raw sink, MinIO, and inspection UIs:
+
+- Kafka UI: <http://localhost:8083>
+- MinIO console: <http://localhost:9001> (`minioadmin` / `minioadmin`)
+
+See the [local pipeline guide](infra/compose/README.md) for logs, record inspection, tests, shutdown, and reset commands.
 
 ## Repository conventions
 

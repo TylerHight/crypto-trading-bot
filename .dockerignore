@@ -1,0 +1,10 @@
+.git
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.vscode
+__pycache__
+*.py[cod]
+dist
+infra/compose/data

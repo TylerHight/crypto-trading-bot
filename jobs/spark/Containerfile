@@ -1,0 +1,7 @@
+FROM docker.io/library/spark:3.5.8-scala2.12-java17-python3-ubuntu
+
+USER root
+COPY . /opt/spark/work-dir/jobs/spark
+RUN chown -R spark:spark /opt/spark/work-dir/jobs
+USER spark
+

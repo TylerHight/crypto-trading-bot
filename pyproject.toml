@@ -3,3 +3,17 @@ members = [
     "apps/collector",
     "packages/exchange_adapters",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires the local Podman Compose stack",
+]
+
+[tool.mypy]
+python_version = "3.11"
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["pyspark", "pyspark.*"]
+ignore_missing_imports = true
