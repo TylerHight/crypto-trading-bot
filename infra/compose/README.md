@@ -115,3 +115,5 @@ podman compose down --volumes
 The reset is destructive: all locally archived Kafka and MinIO data is removed.
 
 PostgreSQL, Airflow, dbt, and trading services remain future phases and are intentionally absent from this stack.
+
+For operational verification and incident recovery, use the [local market-data pipeline runbook](../../docs/runbooks/local-market-data-pipeline.md). If the Podman VM claims to be running but the CLI cannot connect, use the [Podman machine connection recovery runbook](../../docs/runbooks/podman-machine-connection-recovery.md).

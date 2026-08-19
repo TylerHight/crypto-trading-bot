@@ -54,7 +54,7 @@ The stack includes the collector, Kafka, a checkpointed Spark raw sink, MinIO, a
 - Kafka UI: <http://localhost:8083>
 - MinIO console: <http://localhost:9001> (`minioadmin` / `minioadmin`)
 
-See the [local pipeline guide](infra/compose/README.md) for logs, record inspection, tests, shutdown, and reset commands.
+See the [local pipeline guide](infra/compose/README.md) for the Compose reference and the [operational runbook](docs/runbooks/local-market-data-pipeline.md) for end-to-end verification, monitoring, and recovery.
 
 ## Repository conventions
 

@@ -1,40 +1,53 @@
-Implemented and finished the Kafka-to-MinIO raw pipeline.
+### User story: Build the curated market-trades pipeline
 
-Key files:
+**As a** data platform developer,  
+**I want** Spark to transform immutable raw Kafka records into a typed, deduplicated curated dataset,  
+**so that** market trades can be queried directly without manually decoding `kafka_value`.
 
-- [docker-compose.yml](C:/Development/Projects/crypto-trading-bot/docker-compose.yml)
-- [raw_market_trades.py](C:/Development/Projects/crypto-trading-bot/jobs/spark/entrypoints/raw_market_trades.py)
-- [raw_kafka.py](C:/Development/Projects/crypto-trading-bot/jobs/spark/transforms/raw_kafka.py)
-- [integration test](C:/Development/Projects/crypto-trading-bot/tests/integration/test_raw_market_trades_pipeline.py)
-- [operating guide](C:/Development/Projects/crypto-trading-bot/infra/compose/README.md)
+#### Acceptance criteria
 
-Completed:
+1. Valid `market.trade.raw` version `v1` events are parsed from `kafka_value`.
+2. Curated Parquet contains typed columns including:
+   - `event_id`
+   - `exchange`
+   - `symbol`
+   - `event_time`
+   - `ingested_at`
+   - `trade_id`
+   - `price`
+   - `size`
+   - `side`
+   - Kafka topic, partition, and offset
+3. `price` and `size` use precise decimal types—not floating point.
+4. Duplicate events are removed using `event_id` and an event-time watermark.
+5. Out-of-order events within the watermark are processed correctly.
+6. Malformed or unsupported events are written to a quarantine location without stopping the stream.
+7. Curated output is stored under:
 
-- Containerized Coinbase collector
-- Kafka and automatic topic creation
-- MinIO and automatic bucket creation
-- Spark Structured Streaming raw sink
-- Byte-preserving Kafka key, value, and headers
-- Kafka topic/partition/offset/timestamp metadata
-- UTC date/hour Parquet partitioning
-- Persistent Spark checkpoints
-- Health checks and localhost-only ports
-- Unit, integration, lint, and type-check coverage
-- Startup and inspection documentation
+```text
+crypto-data/curated/market_trades/v1/
+```
 
-Verification results:
+8. The curated job has a checkpoint separate from the raw sink.
+9. Restarting the job resumes from its checkpoint without creating duplicate curated rows.
+10. Automated tests cover:
+    - A valid BTC trade
+    - A valid ETH trade
+    - A duplicate event
+    - An out-of-order event
+    - Malformed JSON
+    - An unsupported schema version
+11. The existing raw Parquet data remains unchanged.
+12. The operational runbook explains how to start and verify the curated pipeline.
 
-- 25 tests passed; one live integration test skipped by default
-- Live Kafka-to-Parquet integration test passed
-- Ruff passed
-- mypy passed across 16 source files
-- Clean `podman compose down` followed by `up -d --build` passed
-- Restart recovery advanced from offset 5,283 to 5,700 with zero duplicate Kafka identities
+#### Definition of done
 
-The stack is currently running:
+A developer can start the Podman stack, observe curated Parquet files in MinIO, and query readable rows resembling:
 
-- Kafka UI: <http://localhost:8083>
-- MinIO: <http://localhost:9001>
-- MinIO login: `minioadmin` / `minioadmin`
+```text
+event_time | symbol  | price    | size       | side
+-----------|---------|----------|------------|-----
+...        | BTC-USD | 63313.19 | 0.00000008 | BUY
+```
 
-The initializer containers showing `Exited (0)` is expected. Changes remain uncommitted.
+One-minute candle aggregation should be the following user story after this curated trade dataset is reliable.

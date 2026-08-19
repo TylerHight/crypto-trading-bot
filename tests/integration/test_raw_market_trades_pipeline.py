@@ -48,7 +48,9 @@ def test_kafka_record_is_archived_byte_for_byte_in_raw_parquet() -> None:
     delivery: list[tuple[str, int, int]] = []
     producer = Producer(
         {
-            "bootstrap.servers": "localhost:9092",
+            "bootstrap.servers": os.getenv(
+                "INTEGRATION_KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092"
+            ),
             "enable.idempotence": True,
             "acks": "all",
         }
@@ -72,7 +74,9 @@ def test_kafka_record_is_archived_byte_for_byte_in_raw_parquet() -> None:
 
     s3 = boto3.client(
         "s3",
-        endpoint_url="http://localhost:9000",
+        endpoint_url=os.getenv(
+            "INTEGRATION_S3_ENDPOINT", "http://127.0.0.1:9000"
+        ),
         aws_access_key_id="minioadmin",
         aws_secret_access_key="minioadmin",
         region_name="us-east-1",
