@@ -1,4 +1,5 @@
 import logging
+from typing import Protocol
 
 from pyspark.sql import SparkSession
 
@@ -8,7 +9,20 @@ from jobs.spark.transforms.raw_kafka import select_raw_kafka_record
 LOGGER = logging.getLogger(__name__)
 
 
-def configure_s3a(spark: SparkSession, settings: RawSinkSettings) -> None:
+class S3Settings(Protocol):
+    """Minimum object-storage settings shared by Spark entry points."""
+
+    @property
+    def s3_endpoint(self) -> str: ...
+
+    @property
+    def s3_access_key(self) -> str: ...
+
+    @property
+    def s3_secret_key(self) -> str: ...
+
+
+def configure_s3a(spark: SparkSession, settings: S3Settings) -> None:
     """Configure Hadoop's S3A client for local MinIO or an S3-compatible endpoint."""
 
     hadoop = spark.sparkContext._jsc.hadoopConfiguration()

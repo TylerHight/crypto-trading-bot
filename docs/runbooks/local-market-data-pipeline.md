@@ -216,6 +216,57 @@ Expected result:
 
 This is the strongest current proof that data is being imported and stored correctly.
 
+### 7. Audit all retained Kafka records against raw Parquet
+
+The integration test above checks one new record. The raw integrity audit checks
+every Kafka record currently retained by the broker against Parquet using the
+exact `(topic, partition, offset)` identity.
+
+Rebuild the raw-sink image after changing audit code:
+
+```powershell
+podman compose build raw-sink
+```
+
+Run the read-only audit:
+
+```powershell
+.\scripts\run_raw_integrity_audit.ps1
+```
+
+The script starts Kafka and MinIO if they are stopped and waits for both health
+checks before launching Spark. It does not start the collector or live raw sink,
+and it preserves the existing named data volumes.
+
+The audit does not publish Kafka records, rewrite Parquet, or modify the Spark
+checkpoint. It prints a readable summary followed by one machine-readable line:
+
+```text
+Raw integrity audit: PASSED
+  market.trades.raw.v1 partition=0 range=[0,1540818) ...
+AUDIT_REPORT_JSON={"status":"passed",...}
+```
+
+Exit codes are:
+
+- `0`: every retained Kafka position exists exactly once in raw Parquet and all
+  audited values contain valid event JSON.
+- `2`: at least one Kafka position is missing or duplicated, or at least one
+  archived value is malformed.
+- Any other nonzero value: the audit itself failed, for example because Kafka
+  or MinIO was unavailable.
+
+Duplicate `event_id` values are reported as warnings rather than archive
+failures because the immutable raw layer preserves source redeliveries. Use a
+smaller or larger bounded finding sample when necessary:
+
+```powershell
+.\scripts\run_raw_integrity_audit.ps1 -SampleLimit 50
+```
+
+Do not delete checkpoints or Parquet files to make a failed audit pass. Preserve
+the JSON report and relevant service logs before investigating recovery.
+
 ## Routine monitoring
 
 Follow the two application processes:

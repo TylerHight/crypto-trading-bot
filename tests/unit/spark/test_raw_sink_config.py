@@ -1,6 +1,6 @@
 import pytest
 
-from jobs.spark.config import RawSinkSettings
+from jobs.spark.config import RawAuditSettings, RawSinkSettings
 
 
 def test_raw_sink_defaults_match_local_compose() -> None:
@@ -47,3 +47,27 @@ def test_raw_sink_rejects_shared_output_and_checkpoint_path() -> None:
                 "RAW_SINK_CHECKPOINT_PATH": "s3a://bucket/same/",
             }
         )
+
+
+def test_raw_audit_defaults_match_local_compose() -> None:
+    settings = RawAuditSettings.from_env({})
+
+    assert settings.kafka_bootstrap_servers == "kafka:29092"
+    assert settings.kafka_topic == "market.trades.raw.v1"
+    assert settings.input_path == "s3a://crypto-data/raw/market_trade_raw/v1"
+    assert settings.s3_endpoint == "http://minio:9000"
+    assert settings.sample_limit == 20
+
+
+def test_raw_audit_normalizes_input_path() -> None:
+    settings = RawAuditSettings.from_env(
+        {"RAW_AUDIT_INPUT_PATH": "s3a://bucket/raw/"}
+    )
+
+    assert settings.input_path == "s3a://bucket/raw"
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_raw_audit_requires_positive_sample_limit(value: str) -> None:
+    with pytest.raises(ValueError, match="RAW_AUDIT_SAMPLE_LIMIT"):
+        RawAuditSettings.from_env({"RAW_AUDIT_SAMPLE_LIMIT": value})
