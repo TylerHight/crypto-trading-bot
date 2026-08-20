@@ -47,6 +47,13 @@ services:
         --topic market.trades.raw.v1
         --partitions 1
         --replication-factor 1
+        && /opt/kafka/bin/kafka-topics.sh
+        --bootstrap-server kafka:29092
+        --create
+        --if-not-exists
+        --topic market.data.quality.v1
+        --partitions 1
+        --replication-factor 1
     restart: "no"
 
   kafka-ui:
@@ -106,6 +113,9 @@ services:
       COLLECTOR_WEBSOCKET_URL: ${COLLECTOR_WEBSOCKET_URL:-wss://advanced-trade-ws.coinbase.com}
       COLLECTOR_SYMBOLS: '${COLLECTOR_SYMBOLS:-["BTC-USD","ETH-USD"]}'
       COLLECTOR_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      COLLECTOR_KAFKA_QUALITY_TOPIC: ${COLLECTOR_KAFKA_QUALITY_TOPIC:-market.data.quality.v1}
+      COLLECTOR_HEARTBEAT_TIMEOUT_SECONDS: ${COLLECTOR_HEARTBEAT_TIMEOUT_SECONDS:-10}
+      COLLECTOR_HEALTH_SUMMARY_INTERVAL_SECONDS: ${COLLECTOR_HEALTH_SUMMARY_INTERVAL_SECONDS:-60}
     depends_on:
       kafka:
         condition: service_healthy

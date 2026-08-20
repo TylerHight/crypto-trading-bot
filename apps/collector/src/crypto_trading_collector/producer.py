@@ -6,7 +6,7 @@ from typing import Any, Protocol, cast
 from confluent_kafka import KafkaError, KafkaException, Message, Producer
 
 from .config import CollectorSettings
-from .models import MarketTradeRawEvent
+from .models import MarketDataQualityEvent, MarketTradeRawEvent
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,8 +35,10 @@ class KafkaEventPublisher:
         self,
         settings: CollectorSettings,
         producer: ProducerLike | None = None,
+        topic: str | None = None,
+        client_id: str | None = None,
     ) -> None:
-        self._topic = settings.kafka_topic
+        self._topic = topic or settings.kafka_topic
         self._poll_timeout = settings.kafka_poll_timeout_seconds
         self._flush_timeout = settings.kafka_flush_timeout_seconds
         self._queue_full_retries = settings.kafka_queue_full_retries
@@ -44,7 +46,7 @@ class KafkaEventPublisher:
 
         config: dict[str, Any] = {
             "bootstrap.servers": settings.kafka_bootstrap_servers,
-            "client.id": settings.kafka_client_id,
+            "client.id": client_id or settings.kafka_client_id,
             "enable.idempotence": True,
             "acks": "all",
             "security.protocol": settings.kafka_security_protocol,
@@ -66,13 +68,18 @@ class KafkaEventPublisher:
 
         self._producer = producer if producer is not None else cast(ProducerLike, Producer(config))
 
-    def publish(self, event: MarketTradeRawEvent) -> None:
+    def publish(self, event: MarketTradeRawEvent | MarketDataQualityEvent) -> None:
         """Queue an event and surface any earlier asynchronous delivery error."""
 
         self._producer.poll(0)
         self._raise_pending_delivery_error()
 
-        key = f"{event.exchange.lower()}:{event.symbol.upper()}".encode()
+        if isinstance(event, MarketTradeRawEvent):
+            key_text = f"{event.exchange.lower()}:{event.symbol.upper()}"
+        else:
+            key_text = f"{event.exchange.lower()}:{event.connection_id}"
+
+        key = key_text.encode()
         value = event.model_dump_json().encode()
         headers = [
             ("event_type", event.event_type.encode()),

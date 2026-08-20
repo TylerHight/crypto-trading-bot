@@ -3,7 +3,11 @@ from typing import Any
 
 import pytest
 from crypto_trading_collector.config import CollectorSettings
-from crypto_trading_collector.models import MarketTradeRawEvent, event_id_for_trade
+from crypto_trading_collector.models import (
+    MarketDataQualityEvent,
+    MarketTradeRawEvent,
+    event_id_for_trade,
+)
 from crypto_trading_collector.producer import KafkaEventPublisher
 
 
@@ -70,3 +74,26 @@ def test_shutdown_reports_undelivered_messages() -> None:
 
     with pytest.raises(RuntimeError, match="1 undelivered"):
         publisher.close()
+
+
+def test_quality_event_uses_connection_key_and_separate_topic() -> None:
+    settings = CollectorSettings()
+    fake = FakeProducer()
+    publisher = KafkaEventPublisher(
+        settings,
+        producer=fake,
+        topic=settings.kafka_quality_topic,
+    )
+    event = MarketDataQualityEvent(
+        exchange="coinbase",
+        connection_id="4690bf11-e531-411d-bf61-f828c1f49d6b",
+        observation_type="connection_opened",
+        detected_at="2026-08-20T16:00:00Z",
+        connection_started_at="2026-08-20T16:00:00Z",
+        affected_symbols=["BTC-USD"],
+    )
+
+    publisher.publish(event)
+
+    assert fake.messages[0]["topic"] == "market.data.quality.v1"
+    assert fake.messages[0]["key"] == (b"coinbase:4690bf11-e531-411d-bf61-f828c1f49d6b")

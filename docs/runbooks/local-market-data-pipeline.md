@@ -105,7 +105,7 @@ podman compose logs --tail 100 collector
 Expected evidence includes:
 
 ```text
-Connected to Coinbase public WebSocket for BTC-USD,ETH-USD
+Connected to Coinbase public WebSocket connection_id=... continuity_monitor=enabled for BTC-USD,ETH-USD
 ```
 
 The collector logs successful delivery at `DEBUG`, so the absence of one log line per trade is expected at the default `INFO` level.
@@ -143,6 +143,54 @@ market.trades.raw.v1:0:5701
 Run the command again after several seconds. With active BTC-USD and ETH-USD trading, the final number should increase.
 
 For browser inspection, open <http://localhost:8083>, select the `local` cluster, and open `market.trades.raw.v1`. A normal record has a key such as `coinbase:BTC-USD` and a JSON value with `event_type` equal to `market.trade.raw` and `schema_version` equal to `v1`.
+
+### 3a. Confirm WebSocket monitoring is active
+
+The same topic-list command must also show:
+
+```text
+market.data.quality.v1
+```
+
+Read recent monitoring records from the beginning in the local environment:
+
+```powershell
+podman compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh `
+  --bootstrap-server localhost:9092 `
+  --topic market.data.quality.v1 `
+  --from-beginning `
+  --property print.key=true `
+  --property key.separator="`t" `
+  --timeout-ms 10000
+```
+
+You can also open `market.data.quality.v1` in Kafbat at
+<http://localhost:8083>. Keys have the form
+`coinbase:<connection UUID>`. A newly started collector should produce a
+`connection_opened` record, followed by a `health_summary` approximately every
+60 seconds. Increasing `envelopes_observed` and `heartbeats_observed`, along with
+small `seconds_since_last_message` and `seconds_since_last_heartbeat` values,
+prove the monitor is receiving and evaluating the feed.
+
+Treat these observation types as incidents requiring investigation:
+
+- `sequence_gap`, `duplicate_sequence`, or `out_of_order_sequence`
+- `heartbeat_gap` or `heartbeat_silence`
+- `malformed_message`
+- an unexpected `connection_closed` followed by `reconnect_scheduled` and
+  `reconnect_attempt`
+
+Heartbeat silence forces a reconnect. Confirm that it is followed by a new
+`connection_opened` and `connection_recovered` record with a different
+connection ID. The quality topic is durable in Kafka but is not currently copied
+to the raw trade Parquet dataset.
+
+If health summaries stop while trades continue, search collector logs for
+`Failed to publish Coinbase data-quality observation`; this means the monitoring
+logic is running but its durable publication path is unhealthy. If both trades
+and summaries stop, inspect the last connection event and collector/Kafka logs.
+Do not interpret an absence of anomaly events alone as proof of a healthy feed;
+use recent health summaries as the positive signal.
 
 ### 4. Confirm Spark is running and committing progress
 
@@ -283,6 +331,9 @@ For a concise operational check, verify all four signals:
 2. The Kafka end offset increases.
 3. Spark checkpoint commit numbers increase.
 4. New Parquet objects appear beneath the current UTC date/hour prefix.
+
+Also confirm a recent `health_summary` exists in `market.data.quality.v1` when
+validating the WebSocket monitoring path itself.
 
 Container health alone proves process availability, not end-to-end data flow.
 

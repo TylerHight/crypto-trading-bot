@@ -20,6 +20,7 @@ class CollectorSettings(BaseSettings):
 
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic: str = "market.trades.raw.v1"
+    kafka_quality_topic: str = "market.data.quality.v1"
     kafka_client_id: str = "market-data-collector"
     kafka_security_protocol: Literal["PLAINTEXT", "SSL", "SASL_SSL"] = "PLAINTEXT"
     kafka_sasl_mechanism: (
@@ -35,6 +36,9 @@ class CollectorSettings(BaseSettings):
 
     reconnect_initial_seconds: float = Field(default=1.0, gt=0)
     reconnect_max_seconds: float = Field(default=30.0, gt=0)
+    heartbeat_timeout_seconds: float = Field(default=10.0, gt=0)
+    health_summary_interval_seconds: float = Field(default=60.0, gt=0)
+    malformed_message_excerpt_length: int = Field(default=256, ge=1, le=1024)
     kafka_poll_timeout_seconds: float = Field(default=0.1, gt=0)
     kafka_flush_timeout_seconds: float = Field(default=10.0, gt=0)
     kafka_queue_full_retries: int = Field(default=3, ge=0)
@@ -47,7 +51,12 @@ class CollectorSettings(BaseSettings):
             raise ValueError("At least one non-empty symbol is required")
         return list(dict.fromkeys(cleaned))
 
-    @field_validator("kafka_bootstrap_servers", "kafka_topic", "kafka_client_id")
+    @field_validator(
+        "kafka_bootstrap_servers",
+        "kafka_topic",
+        "kafka_quality_topic",
+        "kafka_client_id",
+    )
     @classmethod
     def validate_non_empty_setting(cls, value: str) -> str:
         cleaned = value.strip()

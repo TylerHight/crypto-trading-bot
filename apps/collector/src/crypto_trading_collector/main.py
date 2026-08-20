@@ -1,12 +1,21 @@
 import asyncio
 import logging
+from collections.abc import Callable
+from dataclasses import asdict
 
-from crypto_exchange_adapters.coinbase import CoinbasePublicTradeClient
+from crypto_exchange_adapters.coinbase import (
+    CoinbasePublicTradeClient,
+    FeedQualityObservation,
+)
 from crypto_exchange_adapters.models import ExchangeTrade
 
 from .config import CollectorSettings
 from .exchange_client import TradeSource
-from .models import MarketTradeRawEvent, event_id_for_trade
+from .models import (
+    MarketDataQualityEvent,
+    MarketTradeRawEvent,
+    event_id_for_trade,
+)
 from .producer import KafkaEventPublisher
 
 LOGGER = logging.getLogger(__name__)
@@ -32,7 +41,18 @@ def build_event(trade: ExchangeTrade) -> MarketTradeRawEvent:
     )
 
 
-def build_trade_source(settings: CollectorSettings) -> TradeSource:
+def build_quality_event(
+    observation: FeedQualityObservation,
+) -> MarketDataQualityEvent:
+    """Convert an adapter observation into the durable Kafka contract."""
+
+    return MarketDataQualityEvent.model_validate(asdict(observation))
+
+
+def build_trade_source(
+    settings: CollectorSettings,
+    observation_callback: Callable[[FeedQualityObservation], None] | None = None,
+) -> TradeSource:
     """Construct the configured exchange adapter."""
 
     if settings.exchange == "coinbase":
@@ -41,6 +61,10 @@ def build_trade_source(settings: CollectorSettings) -> TradeSource:
             symbols=settings.symbols,
             reconnect_initial_seconds=settings.reconnect_initial_seconds,
             reconnect_max_seconds=settings.reconnect_max_seconds,
+            heartbeat_timeout_seconds=settings.heartbeat_timeout_seconds,
+            health_summary_interval_seconds=(settings.health_summary_interval_seconds),
+            malformed_message_excerpt_length=(settings.malformed_message_excerpt_length),
+            observation_callback=observation_callback,
         )
 
     raise ValueError(f"Unsupported exchange: {settings.exchange}")
@@ -49,17 +73,31 @@ def build_trade_source(settings: CollectorSettings) -> TradeSource:
 async def run(settings: CollectorSettings) -> None:
     """Run the collector until cancelled or a fatal publication error occurs."""
 
-    source = build_trade_source(settings)
-    publisher = KafkaEventPublisher(settings)
+    trade_publisher = KafkaEventPublisher(settings)
+    quality_publisher = KafkaEventPublisher(
+        settings,
+        topic=settings.kafka_quality_topic,
+        client_id=f"{settings.kafka_client_id}-quality",
+    )
+    source = build_trade_source(
+        settings,
+        observation_callback=lambda observation: quality_publisher.publish(
+            build_quality_event(observation)
+        ),
+    )
 
     try:
         async for trade in source.trades():
-            publisher.publish(build_event(trade))
+            trade_publisher.publish(build_event(trade))
     except asyncio.CancelledError:
         LOGGER.info("Collector shutdown requested")
         raise
     finally:
-        publisher.close()
+        try:
+            quality_publisher.close()
+        except Exception:
+            LOGGER.exception("Failed to flush the data-quality Kafka publisher")
+        trade_publisher.close()
 
 
 def main() -> None:
