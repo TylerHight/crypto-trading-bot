@@ -187,7 +187,8 @@ class CoinbasePublicTradeClient:
                     )
 
                     LOGGER.info(
-                        "Connected to Coinbase public WebSocket connection_id=%s for %s",
+                        "Connected to Coinbase public WebSocket connection_id=%s "
+                        "continuity_monitor=enabled for %s",
                         connection_id,
                         ",".join(self._symbols),
                     )
