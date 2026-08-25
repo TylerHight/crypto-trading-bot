@@ -266,9 +266,11 @@ This is the strongest current proof that data is being imported and stored corre
 
 ### 7. Audit all retained Kafka records against raw Parquet
 
-The integration test above checks one new record. The raw integrity audit checks
-every Kafka record currently retained by the broker against Parquet using the
-exact `(topic, partition, offset)` identity.
+The integration test above checks one new record. The raw integrity audit first
+captures each topic partition's broker-reported beginning and exclusive ending
+offset, then checks every Kafka record in those fixed ranges against Parquet
+using the exact `(topic, partition, offset)` identity. Partitions that are empty
+at capture time are still included in the report.
 
 Rebuild the raw-sink image after changing audit code:
 
@@ -291,9 +293,22 @@ checkpoint. It prints a readable summary followed by one machine-readable line:
 
 ```text
 Raw integrity audit: PASSED
-  market.trades.raw.v1 partition=0 range=[0,1540818) ...
+  market.trades.raw.v1 partition=0 range=[0,1540818) kafka=1540818 parquet=1540818 archived_range=[0,1540817] missing=0 duplicate_positions=0
 AUDIT_REPORT_JSON={"status":"passed",...}
 ```
+
+Each object in the JSON `partitions` array contains:
+
+- `kafka_topic` and `kafka_partition`: the audited Kafka identity.
+- `earliest_offset` and `ending_offset_exclusive`: the fixed broker boundaries.
+- `kafka_records` and `parquet_records_in_range`: records read inside the range.
+- `minimum_archived_offset` and `maximum_archived_offset`: the lowest and highest
+  Parquet offsets observed inside the retained range, or `null` when none exist.
+- `missing_from_parquet` and `duplicate_parquet_positions`: integrity findings.
+
+Top-level fields contain the audit timestamps and status, malformed-value and
+duplicate-event-ID counts, and bounded identifier-only samples. Complete Kafka
+values and storage credentials are never included.
 
 Exit codes are:
 

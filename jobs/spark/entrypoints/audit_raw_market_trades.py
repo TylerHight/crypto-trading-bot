@@ -1,9 +1,11 @@
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import types as T
 from pyspark.storagelevel import StorageLevel
 
 from jobs.spark.config import RawAuditSettings
@@ -16,19 +18,149 @@ from jobs.spark.transforms.raw_integrity import (
 LOGGER = logging.getLogger(__name__)
 INTEGRITY_FAILURE_EXIT_CODE = 2
 
+PARTITION_BOUND_SCHEMA = T.StructType(
+    [
+        T.StructField("kafka_topic", T.StringType(), nullable=False),
+        T.StructField("kafka_partition", T.IntegerType(), nullable=False),
+        T.StructField("earliest_offset", T.LongType(), nullable=False),
+        T.StructField("ending_offset_exclusive", T.LongType(), nullable=False),
+    ]
+)
+
+
+@dataclass(frozen=True)
+class KafkaPartitionBound:
+    """A fixed retained Kafka offset range captured before the audit read."""
+
+    topic: str
+    partition: int
+    earliest_offset: int
+    ending_offset_exclusive: int
+
+
+def capture_kafka_partition_bounds(
+    spark: SparkSession,
+    settings: RawAuditSettings,
+) -> list[KafkaPartitionBound]:
+    """Capture broker beginning/end offsets for every current topic partition."""
+
+    jvm = spark.sparkContext._jvm
+    if jvm is None:
+        raise RuntimeError("Spark JVM is unavailable for Kafka offset capture")
+    properties = jvm.java.util.Properties()
+    properties.setProperty(
+        "bootstrap.servers",
+        settings.kafka_bootstrap_servers,
+    )
+    admin = jvm.org.apache.kafka.clients.admin.AdminClient.create(properties)
+
+    try:
+        topic_names = jvm.java.util.Collections.singleton(settings.kafka_topic)
+        descriptions = admin.describeTopics(topic_names).allTopicNames().get()
+        description = descriptions.get(settings.kafka_topic)
+        partition_ids = sorted(
+            int(partition.partition()) for partition in description.partitions()
+        )
+        if not partition_ids:
+            raise RuntimeError(
+                f"Kafka topic {settings.kafka_topic!r} has no partitions"
+            )
+
+        topic_partitions: dict[int, Any] = {}
+        earliest_specs = jvm.java.util.HashMap()
+        ending_specs = jvm.java.util.HashMap()
+        for partition_id in partition_ids:
+            topic_partition = jvm.org.apache.kafka.common.TopicPartition(
+                settings.kafka_topic,
+                partition_id,
+            )
+            topic_partitions[partition_id] = topic_partition
+            earliest_specs.put(
+                topic_partition,
+                jvm.org.apache.kafka.clients.admin.OffsetSpec.earliest(),
+            )
+            ending_specs.put(
+                topic_partition,
+                jvm.org.apache.kafka.clients.admin.OffsetSpec.latest(),
+            )
+
+        # Capture the upper boundary first so messages arriving afterward are
+        # excluded even while the remaining audit metadata is being collected.
+        endings = admin.listOffsets(ending_specs).all().get()
+        beginnings = admin.listOffsets(earliest_specs).all().get()
+
+        return [
+            KafkaPartitionBound(
+                topic=settings.kafka_topic,
+                partition=partition_id,
+                earliest_offset=int(
+                    beginnings.get(topic_partitions[partition_id]).offset()
+                ),
+                ending_offset_exclusive=int(
+                    endings.get(topic_partitions[partition_id]).offset()
+                ),
+            )
+            for partition_id in partition_ids
+        ]
+    finally:
+        admin.close()
+
+
+def kafka_batch_options(
+    bounds: list[KafkaPartitionBound],
+) -> dict[str, str]:
+    """Encode captured bounds as explicit Spark Kafka batch options."""
+
+    if not bounds:
+        raise ValueError("At least one Kafka partition bound is required")
+
+    assignments: dict[str, list[int]] = {}
+    starting_offsets: dict[str, dict[str, int]] = {}
+    ending_offsets: dict[str, dict[str, int]] = {}
+    for bound in bounds:
+        assignments.setdefault(bound.topic, []).append(bound.partition)
+        starting_offsets.setdefault(bound.topic, {})[str(bound.partition)] = (
+            bound.earliest_offset
+        )
+        ending_offsets.setdefault(bound.topic, {})[str(bound.partition)] = (
+            bound.ending_offset_exclusive
+        )
+
+    for partitions in assignments.values():
+        partitions.sort()
+
+    return {
+        "assign": json.dumps(assignments, separators=(",", ":"), sort_keys=True),
+        "startingOffsets": json.dumps(
+            starting_offsets,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        "endingOffsets": json.dumps(
+            ending_offsets,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    }
+
 
 def read_bounded_kafka_batch(
     spark: SparkSession,
     settings: RawAuditSettings,
+    bounds: list[KafkaPartitionBound],
 ) -> DataFrame:
-    """Create a non-streaming Kafka read bounded at the source's latest offsets."""
+    """Create a non-streaming Kafka read using already captured offsets."""
+
+    options = kafka_batch_options(bounds)
+    reader = spark.read.format("kafka").option(
+        "kafka.bootstrap.servers",
+        settings.kafka_bootstrap_servers,
+    )
+    for name, value in options.items():
+        reader = reader.option(name, value)
 
     return (
-        spark.read.format("kafka")
-        .option("kafka.bootstrap.servers", settings.kafka_bootstrap_servers)
-        .option("subscribe", settings.kafka_topic)
-        .option("startingOffsets", "earliest")
-        .option("endingOffsets", "latest")
+        reader
         .option("failOnDataLoss", "true")
         .option("includeHeaders", "true")
         .load()
@@ -47,6 +179,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
             f"{partition['ending_offset_exclusive']}) "
             f"kafka={partition['kafka_records']} "
             f"parquet={partition['parquet_records_in_range']} "
+            f"archived_range=[{partition['minimum_archived_offset']},"
+            f"{partition['maximum_archived_offset']}] "
             f"missing={partition['missing_from_parquet']} "
             f"duplicate_positions={partition['duplicate_parquet_positions']}"
         )
@@ -75,8 +209,21 @@ def main() -> None:
         settings.input_path,
     )
 
+    captured_bounds = capture_kafka_partition_bounds(spark, settings)
+    partition_bounds = spark.createDataFrame(
+        [
+            (
+                bound.topic,
+                bound.partition,
+                bound.earliest_offset,
+                bound.ending_offset_exclusive,
+            )
+            for bound in captured_bounds
+        ],
+        schema=PARTITION_BOUND_SCHEMA,
+    )
     kafka_records = select_kafka_audit_records(
-        read_bounded_kafka_batch(spark, settings)
+        read_bounded_kafka_batch(spark, settings, captured_bounds)
     ).persist(StorageLevel.DISK_ONLY)
 
     try:
@@ -89,6 +236,7 @@ def main() -> None:
         report = build_integrity_report(
             kafka_records,
             parquet_records,
+            partition_bounds,
             settings.sample_limit,
             started_at,
         )

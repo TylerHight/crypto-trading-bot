@@ -67,14 +67,21 @@ def select_kafka_audit_records(records: DataFrame) -> DataFrame:
     )
 
 
-def calculate_partition_bounds(kafka_records: DataFrame) -> DataFrame:
-    """Describe the exact offsets materialized by the bounded Kafka read."""
+def add_kafka_record_counts(
+    partition_bounds: DataFrame,
+    kafka_records: DataFrame,
+) -> DataFrame:
+    """Add materialized record counts to broker-captured partition bounds."""
 
-    return kafka_records.groupBy("kafka_topic", "kafka_partition").agg(
-        F.min("kafka_offset").alias("earliest_offset"),
-        (F.max("kafka_offset") + F.lit(1)).alias("ending_offset_exclusive"),
-        F.count(F.lit(1)).alias("kafka_records"),
-    )
+    kafka_counts = kafka_records.groupBy(
+        "kafka_topic",
+        "kafka_partition",
+    ).agg(F.count(F.lit(1)).alias("kafka_records"))
+    return partition_bounds.join(
+        kafka_counts,
+        on=["kafka_topic", "kafka_partition"],
+        how="left",
+    ).fillna(0, subset=["kafka_records"])
 
 
 def filter_parquet_to_bounds(
@@ -175,14 +182,16 @@ def safe_sample(
 def build_integrity_report(
     kafka_records: DataFrame,
     parquet_records: DataFrame,
+    captured_partition_bounds: DataFrame,
     sample_limit: int,
     started_at: datetime,
 ) -> dict[str, Any]:
     """Run all bounded checks and return a JSON-serializable audit report."""
 
-    partition_bounds = calculate_partition_bounds(kafka_records).persist(
-        StorageLevel.MEMORY_AND_DISK
-    )
+    partition_bounds = add_kafka_record_counts(
+        captured_partition_bounds,
+        kafka_records,
+    ).persist(StorageLevel.MEMORY_AND_DISK)
     parquet_in_range = filter_parquet_to_bounds(
         parquet_records,
         partition_bounds,
@@ -208,10 +217,14 @@ def build_integrity_report(
     )
 
     try:
-        parquet_counts = parquet_positions.groupBy(
+        parquet_stats = parquet_positions.groupBy(
             "kafka_topic",
             "kafka_partition",
-        ).agg(F.count(F.lit(1)).alias("parquet_records_in_range"))
+        ).agg(
+            F.count(F.lit(1)).alias("parquet_records_in_range"),
+            F.min("kafka_offset").alias("minimum_archived_offset"),
+            F.max("kafka_offset").alias("maximum_archived_offset"),
+        )
         missing_counts = missing_positions.groupBy(
             "kafka_topic",
             "kafka_partition",
@@ -223,7 +236,7 @@ def build_integrity_report(
 
         partition_rows = (
             partition_bounds.join(
-                parquet_counts,
+                parquet_stats,
                 on=["kafka_topic", "kafka_partition"],
                 how="left",
             )

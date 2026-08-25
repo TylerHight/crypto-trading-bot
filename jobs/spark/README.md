@@ -14,11 +14,13 @@ Keep Spark entry-point wiring in `entrypoints/`, reusable DataFrame logic in `tr
 
 ## Implemented raw integrity audit
 
-`entrypoints/audit_raw_market_trades.py` performs a bounded, non-streaming read
-of retained Kafka data and compares it with raw Parquet by topic, partition, and
-offset. It reports missing archive records, duplicate archive positions,
-malformed event values, and duplicate event IDs without changing source data or
-Spark checkpoints.
+`entrypoints/audit_raw_market_trades.py` captures broker-reported beginning and
+ending offsets for every current topic partition, then performs a bounded,
+non-streaming read of retained Kafka data and compares it with raw Parquet by
+topic, partition, and offset. It reports the captured boundaries, Kafka and
+Parquet counts, archived offset extrema, missing archive records, duplicate
+archive positions, malformed event values, and duplicate event IDs without
+changing source data or Spark checkpoints.
 
 `transforms/raw_integrity.py` contains the reusable DataFrame comparisons and
 strict event-value validation. Run the local audit through

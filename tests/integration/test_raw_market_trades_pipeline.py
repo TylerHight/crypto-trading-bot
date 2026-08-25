@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import time
 from datetime import UTC, datetime
 from io import BytesIO
@@ -18,7 +19,7 @@ def _integration_enabled() -> bool:
     not _integration_enabled(),
     reason="set RUN_INTEGRATION_TESTS=1 with the local Compose stack running",
 )
-def test_kafka_record_is_archived_byte_for_byte_in_raw_parquet() -> None:
+def test_kafka_record_is_archived_and_retained_snapshot_passes_audit() -> None:
     import boto3
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -133,3 +134,51 @@ def test_kafka_record_is_archived_byte_for_byte_in_raw_parquet() -> None:
     ]
     assert len(str(row["event_date"])) == 10
     assert len(str(row["event_hour"])) == 2
+
+    audit = subprocess.run(
+        [
+            "podman",
+            "compose",
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            "-e",
+            "RAW_AUDIT_SAMPLE_LIMIT=5",
+            "raw-sink",
+            "/opt/spark/bin/spark-submit",
+            "--master",
+            "local[2]",
+            "--conf",
+            "spark.jars.ivy=/opt/spark/.ivy2",
+            "--packages",
+            (
+                "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.8,"
+                "org.apache.hadoop:hadoop-aws:3.3.4"
+            ),
+            (
+                "/opt/spark/work-dir/jobs/spark/entrypoints/"
+                "audit_raw_market_trades.py"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert audit.returncode == 0, audit.stdout + audit.stderr
+
+    report_lines = [
+        line
+        for line in audit.stdout.splitlines()
+        if line.startswith("AUDIT_REPORT_JSON=")
+    ]
+    assert len(report_lines) == 1
+    report = json.loads(report_lines[0].partition("=")[2])
+    assert report["status"] == "passed"
+    assert any(
+        partition["kafka_partition"] == expected_identity[1]
+        and partition["earliest_offset"] <= expected_identity[2]
+        < partition["ending_offset_exclusive"]
+        for partition in report["partitions"]
+    )
