@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crypto-historical-backfill"
+version = "0.1.0"
+description = "Bounded market-data reconciliation and historical backfill tools"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.40,<2",
+    "crypto-exchange-adapters",
+    "pyarrow>=21,<24",
+]
+
+[project.scripts]
+reconcile-coinbase-trades = "crypto_historical_backfill.reconcile_coinbase_trades:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/crypto_historical_backfill"]
+
+[tool.uv.sources]
+crypto-exchange-adapters = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

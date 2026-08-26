@@ -1,251 +1,328 @@
-# User story: Audit Kafka-to-Parquet data integrity
+# User story: Reconcile archived Coinbase trades against REST
 
 ## Story
 
-As a data pipeline operator,
-I want a read-only audit that compares retained Kafka records with raw Parquet
-records,
-so that I can identify missing or duplicated archived records without changing
-Kafka, Parquet, or Spark checkpoint data.
+As a market-data pipeline operator,
+I want a bounded reconciliation between Coinbase REST trades and archived raw
+trade events,
+so that I can identify source trades missed by the WebSocket collection path
+without confusing them with Kafka-to-Parquet archive failures.
 
 ## Why this is next
 
-The existing integration test proves that one newly published Kafka record can
-reach Parquet. It does not prove that every existing Kafka record was archived
-exactly once.
+The Kafka-to-Parquet integrity audit now proves that every retained Kafka record
+in a captured range exists exactly once in raw Parquet. It does not prove that
+Coinbase delivered every trade to the collector or that the collector received
+every WebSocket update.
 
-The raw Parquet layer already stores the fields needed for a reliable audit:
+The collector already emits durable observations for sequence gaps, heartbeat
+silence, disconnects, and reconnects. Those observations identify suspicious
+time intervals. The next step is to compare trades archived during a bounded
+interval with Coinbase's REST trade results using the source trade identity:
 
 ```text
-kafka_topic
-kafka_partition
-kafka_offset
-kafka_key
-kafka_value
-kafka_headers
+Coinbase REST: product_id + trade_id
+Raw archive:   symbol     + source_event_id
 ```
 
-The combination of `kafka_topic`, `kafka_partition`, and `kafka_offset`
-identifies the original Kafka log position. Comparing those identities is more
-reliable than comparing only row counts.
+This story deliberately detects and persists source gaps before any automated
+repair is introduced. A later story can backfill confirmed missing identities
+through the canonical Kafka path.
+
+## Dependency
+
+The raw integrity audit must pass for the relevant retained Kafka range before
+a REST-only identity is classified as a Coinbase/WebSocket source gap. If raw
+integrity fails, reconciliation must stop with an unresolved status because the
+missing trade may instead be a Kafka-to-Parquet archive failure.
+
+## Important source limitation
+
+Coinbase's market-trades REST endpoint accepts a product, start time, end time,
+and result limit. A response at the requested limit may be truncated and must
+not be treated as complete.
+
+The reconciler must split full result windows into smaller time segments until
+each segment is demonstrably below the configured limit or a configured minimum
+segment duration is reached. If completeness still cannot be established, the
+run remains unresolved rather than reporting a false pass.
+
+REST responses may overlap at time boundaries. Normalize every result and
+deduplicate by `(product_id, trade_id)`, then apply the requested interval
+locally as start-inclusive and end-exclusive:
+
+```text
+[start_at, end_at)
+```
+
+An empty REST response alone is not evidence that no trades occurred.
 
 ## Scope
 
-Create a manually runnable, read-only Spark batch audit that:
+Create a manually runnable reconciliation job that:
 
-1. Captures a fixed Kafka offset range for every topic partition.
-2. Reads retained Kafka records inside that range.
-3. Reads raw Parquet records for the same range.
-4. Finds Kafka records that are missing from Parquet.
-5. Finds Kafka positions that appear more than once in Parquet.
-6. Reports invalid event JSON and duplicate event IDs as separate findings.
-7. Produces a small machine-readable JSON summary and readable console output.
-8. Exits unsuccessfully when integrity failures are present.
+1. Accepts one Coinbase product and an explicit UTC start and end timestamp.
+2. Rejects unbounded, inverted, naive-timezone, or excessively large windows.
+3. Optionally records the durable data-quality incident that motivated the run.
+4. Requires evidence that the Kafka-to-Parquet audit passed before classifying
+   missing source trades.
+5. Queries Coinbase market trades with timeouts, bounded retries, rate-limit
+   backoff, a maximum page/request count, and recursive time-window splitting.
+6. Normalizes REST trades through the shared exchange trade model.
+7. Reads only relevant raw Parquet date/hour partitions and safely parses valid
+   `market.trade.raw.v1` Coinbase events.
+8. Compares REST and archive identities by `(symbol, source_event_id)`.
+9. Reports REST-only identities as missing from the archive.
+10. Reports archive-only identities, duplicate REST identities, malformed
+    archive values, and duplicate archived source identities separately.
+11. Writes an append-only machine-readable run report and a bounded console
+    summary without including credentials or complete trade payloads.
+12. Persists confirmed REST-only identities in a reconciliation findings path
+    separate from raw Parquet and Kafka-position audit reports.
 
-The audit must not publish messages, rewrite Parquet, delete checkpoints, or
-repair data automatically.
-
-## Important distinction
-
-This story validates the pipeline boundary:
-
-```text
-Kafka -> Spark raw sink -> Parquet
-```
-
-It does not prove that Coinbase delivered every trade to the collector.
-
-Historical Coinbase WebSocket completeness requires a separate reconciliation
-against an authoritative source such as Coinbase REST data. The archived trade
-records cannot reconstruct every old WebSocket sequence because heartbeat and
-subscription envelopes were not written to Kafka.
+The first version must not publish trades, modify raw Parquet, delete
+checkpoints, or mark an incident repaired.
 
 ## Proposed entry point
 
-Add a command such as:
+Build the first implementation in `apps/historical_backfill` and expose a
+command such as:
 
 ```powershell
-python -m jobs.spark.entrypoints.audit_raw_market_trades
+python -m crypto_historical_backfill.reconcile_coinbase_trades `
+  --symbol BTC-USD `
+  --start-at 2026-08-25T14:00:00Z `
+  --end-at 2026-08-25T14:05:00Z `
+  --raw-input s3a://crypto-data/raw/market_trade_raw/v1 `
+  --report-output s3a://crypto-data/reconciliation/coinbase-trades
 ```
 
-The command should reuse the existing Kafka, MinIO, and S3A configuration where
-possible. Audit-specific settings may be added for the report path and optional
-date or offset bounds.
+An optional `--incident-id` may link the run to a durable feed-quality
+observation. Environment variables should supply API and object-storage
+credentials; credentials must never be accepted in report fields.
 
-## Required audit checks
+## Reconciliation states
 
-### 1. Missing Parquet records
-
-Perform a left anti-join from Kafka to Parquet using:
+Use explicit terminal states:
 
 ```text
-kafka topic = kafka_topic
-partition   = kafka_partition
-offset      = kafka_offset
+passed
+gaps_found
+unresolved_raw_integrity_failure
+unresolved_source_history_unavailable
+unresolved_source_result_truncated
+failed_retryable
+failed_permanent
 ```
 
-Every returned row represents a Kafka record for which no raw Parquet record
-was found.
+State meanings:
 
-### 2. Duplicate archived positions
+- `passed`: REST coverage was established and every REST trade identity was
+  found in the archive.
+- `gaps_found`: REST coverage was established and one or more REST identities
+  were absent from the archive.
+- `unresolved_*`: the comparison could not safely establish completeness.
+- `failed_retryable`: a bounded retry may succeed without changing inputs.
+- `failed_permanent`: configuration or input validation must be corrected.
 
-Group Parquet rows by:
+## Required comparison checks
+
+### 1. REST trades missing from the archive
+
+Perform a set difference from normalized REST identities to archived identities
+using:
 
 ```text
-kafka_topic, kafka_partition, kafka_offset
+REST product_id = archived symbol
+REST trade_id   = archived source_event_id
 ```
 
-Any group with a count greater than one is an archive integrity failure. Spark
-may receive duplicate source events, but it must not archive the same Kafka log
-position more than once.
+Every returned identity is a candidate trade missed before Kafka. It becomes a
+confirmed reconciliation finding only when REST coverage and raw archive
+integrity are both established.
 
-### 3. Invalid event values
+### 2. Archive-only identities
 
-Decode `kafka_value` as UTF-8 JSON and count values that:
+Report archived identities absent from the REST response separately. They must
+not be deleted or automatically labeled corrupt. Possible explanations include
+REST history limits, request-boundary behavior, aliasing, or source behavior
+that requires investigation.
 
-- Cannot be decoded as UTF-8.
-- Cannot be parsed as JSON.
-- Are not JSON objects.
-- Lack required envelope fields such as `event_id`, `event_type`, or
-  `schema_version`.
+Archive-only findings make the result unresolved unless the adapter can prove
+that the REST response completely covers the requested interval.
 
-This first version may check required fields without implementing a complete
-JSON Schema validator inside Spark.
+### 3. Duplicate identities
 
-### 4. Duplicate event IDs
+Count duplicates independently on each side:
 
-Group successfully parsed records by `event_id` and report IDs with more than
-one occurrence.
+- Duplicate REST `(product_id, trade_id)` identities are normalized to one
+  comparison identity and reported as a source/API observation.
+- Duplicate archived `(symbol, source_event_id)` identities are reported as raw
+  source redeliveries and are not confused with duplicate Kafka positions.
 
-Duplicate event IDs are reported separately from duplicate Kafka positions.
-They may indicate a source redelivery rather than a raw archive failure and
-should not be silently removed by this audit.
+### 4. Malformed archive events
 
-### 5. Audit boundaries
+Count values that cannot be decoded or parsed, are not JSON objects, fail the
+required `market.trade.raw.v1` envelope fields, or contain an event timestamp or
+symbol inconsistent with the requested interval.
 
-Capture Kafka end offsets before reading data and use those fixed values as the
-audit upper boundary. This prevents records arriving during the audit from
-making the Kafka and Parquet totals appear inconsistent.
+Malformed in-range archive events make the reconciliation unresolved. The job
+must continue far enough to produce a bounded diagnostic report.
 
-For each partition, record:
+## Deterministic boundaries and identity
 
-- Earliest retained Kafka offset.
-- Fixed exclusive ending offset.
-- Minimum and maximum archived offset observed.
-- Kafka record count within the range.
-- Parquet record count within the range.
+Record the exact requested range and every actual REST sub-window. Apply the
+same `[start_at, end_at)` filter to normalized REST and archived events after
+parsing, regardless of endpoint boundary behavior.
 
-Only compare Parquet rows inside the retained Kafka range. Older Parquet rows
-may legitimately remain after the corresponding Kafka records expire.
+Create a deterministic `reconciliation_key` from:
+
+```text
+exchange + symbol + start_at + end_at + source API version
+```
+
+Each execution may have a unique `run_id`, but repeating identical inputs must
+produce the same reconciliation key and the same sorted identity findings when
+the two sources have not changed.
 
 ## Suggested report
 
-Write a JSON result similar to:
-
 ```json
 {
-  "topic": "market.trades.raw.v1",
-  "started_at": "2026-08-20T16:00:00Z",
-  "completed_at": "2026-08-20T16:01:00Z",
+  "run_id": "e32bf4ea-4e84-4d6a-91dc-7d651a49252c",
+  "reconciliation_key": "coinbase:BTC-USD:2026-08-25T14:00:00Z:2026-08-25T14:05:00Z:v3",
+  "incident_id": null,
+  "exchange": "coinbase",
+  "symbol": "BTC-USD",
+  "start_at": "2026-08-25T14:00:00Z",
+  "end_at_exclusive": "2026-08-25T14:05:00Z",
+  "started_at": "2026-08-25T14:10:00Z",
+  "completed_at": "2026-08-25T14:10:03Z",
   "status": "passed",
-  "partitions": [
-    {
-      "partition": 0,
-      "earliest_offset": 0,
-      "ending_offset_exclusive": 1540818,
-      "kafka_records": 1540818,
-      "parquet_records_in_range": 1540818,
-      "missing_from_parquet": 0,
-      "duplicate_parquet_positions": 0
-    }
-  ],
-  "invalid_event_values": 0,
-  "duplicate_event_ids": 0
+  "raw_integrity_status": "passed",
+  "rest_requests": 3,
+  "rest_trades": 824,
+  "archived_trades": 824,
+  "missing_from_archive": 0,
+  "archive_only": 0,
+  "duplicate_rest_identities": 0,
+  "duplicate_archived_identities": 0,
+  "malformed_archive_values": 0,
+  "samples": {
+    "missing_from_archive": [],
+    "archive_only": []
+  }
 }
 ```
 
-Do not include complete Kafka values or credentials in the report. For sample
-findings, include only a limited number of safe identifiers such as partition,
-offset, and event ID.
+Samples must contain only a capped number of safe identifiers and timestamps.
+Do not include prices, sizes, complete payloads, authorization headers, API
+secrets, S3 credentials, or Kafka values.
+
+## Exit codes
+
+- `0`: reconciliation passed with complete source coverage and no missing
+  archived identities.
+- `2`: complete comparison found confirmed REST-only identities.
+- `3`: reconciliation is unresolved and must not be treated as a pass.
+- Other nonzero codes: configuration or unexpected execution failure.
 
 ## Acceptance criteria
 
-- The audit runs as a Spark batch job and does not start a streaming query.
-- Kafka end offsets are fixed at the beginning of the audit.
-- Kafka and Parquet are compared by topic, partition, and offset.
-- Missing Parquet records are counted and a bounded sample is reported.
-- Duplicate Parquet positions are counted and a bounded sample is reported.
-- Invalid event values are counted without crashing the entire audit.
-- Duplicate event IDs are reported separately from duplicate Kafka positions.
-- Parquet rows older than Kafka's earliest retained offset are not labeled as
-  failures.
-- A passing audit exits with code `0`.
-- Missing or duplicate Kafka positions cause a nonzero exit code.
-- The audit performs no writes except its report output.
-- The command and report fields are documented in the local pipeline runbook.
+- The command requires one symbol and explicit timezone-aware start/end bounds.
+- The configured maximum interval, REST request count, result limit, retry
+  count, timeout, and minimum split duration are enforced.
+- Full REST responses are split; an unsplittable full response is unresolved.
+- REST retries honor rate-limit guidance and never retry without a bound.
+- Both sources are normalized and filtered to the same `[start_at, end_at)`
+  interval.
+- Comparison uses `(symbol, source_event_id)`, not WebSocket sequence numbers,
+  event IDs, row counts, or Kafka offsets.
+- The relevant Kafka-to-Parquet audit must pass before a source gap is
+  confirmed.
+- Missing archived identities are counted, sampled safely, and persisted in a
+  reconciliation-specific append-only location.
+- Archive-only, duplicate-source, and malformed-event findings are reported
+  separately.
+- Empty or truncated REST results never cause a false passing result.
+- Re-running unchanged inputs produces the same reconciliation key and sorted
+  findings.
+- A passing reconciliation exits `0`, confirmed gaps exit `2`, and unresolved
+  coverage exits `3`.
+- The job writes only its report and reconciliation findings.
+- The command, settings, report fields, state meanings, and investigation steps
+  are documented in the local pipeline runbook.
 
-## Tests
+## Required tests
 
-Add focused tests with small in-memory Spark DataFrames for at least:
+Add focused tests for at least:
 
-- Identical Kafka and Parquet identities produce no findings.
-- A Kafka identity absent from Parquet is reported as missing.
-- A repeated Parquet identity is reported as a duplicate.
-- The same record count with one missing and one duplicate still fails.
-- Multiple Kafka partitions are compared independently.
-- Parquet history below Kafka's earliest retained offset is ignored.
-- Invalid JSON is counted and does not stop other checks.
-- Repeated `event_id` values are reported separately.
-- Sample findings are capped so reports cannot grow without limit.
+- Identical REST and archive identities pass.
+- One REST-only identity is reported as missing from the archive.
+- One archive-only identity is reported separately.
+- Equal row counts with one REST-only and one archive-only identity do not pass.
+- Duplicate REST results do not create duplicate missing findings.
+- Duplicate archived source identities are counted independently.
+- BTC and ETH comparisons remain independent.
+- Start-boundary trades are included and end-boundary trades are excluded.
+- A full REST response causes the window to split.
+- Overlapping split responses are deduplicated by source identity.
+- A full response at the minimum split duration remains unresolved.
+- Rate limiting and temporary failures use bounded retries.
+- An empty REST result does not automatically pass.
+- Malformed archive JSON is counted without hiding other findings.
+- A failed raw-integrity prerequisite prevents source-gap classification.
+- Repeated inputs produce the same reconciliation key and finding order.
+- Every sample collection is capped.
 
-Add one optional Compose integration test that publishes uniquely identifiable
-records, waits for the raw sink, runs the audit, and verifies a passing report.
+Add an optional integration test using a stubbed REST server and temporary raw
+Parquet fixtures. It should exercise multiple REST windows, one controlled
+REST-only trade, report persistence, and exit code `2` without publishing to
+Kafka or modifying the raw fixture.
+
+Do not make the normal test suite depend on live Coinbase history. A separate
+manual smoke test may call Coinbase with a very small recent interval.
 
 ## Operational validation
 
-Before running the completed audit, preserve the current Kafka, MinIO, and
-checkpoint volumes. Do not reset data to make a failed audit pass.
+Before reconciliation:
 
-Check the raw sink logs for existing data-loss evidence:
+1. Preserve Kafka, MinIO, and checkpoint volumes.
+2. Run the raw integrity audit and retain its JSON report.
+3. Choose the smallest suspicious interval supported by a durable incident.
+4. Confirm the symbol and UTC bounds before making REST requests.
 
-```powershell
-podman compose logs raw-sink 2>&1 |
-    Select-String -Pattern "data loss|offset.*range|unavailable|exception|terminated"
-```
+After reconciliation:
 
-Run the audit and save its output:
-
-```powershell
-podman compose run --rm raw-sink `
-  /opt/spark/bin/spark-submit `
-  --master local[2] `
-  /opt/spark/work-dir/jobs/spark/entrypoints/audit_raw_market_trades.py
-```
-
-Review every nonzero finding before attempting recovery. In particular, do not
-delete Spark checkpoints or raw Parquet files until the original evidence has
-been preserved.
+1. Preserve the run report and REST request metadata.
+2. Investigate every REST-only and archive-only identity.
+3. Do not publish a repair until source coverage is established.
+4. Do not delete raw data or checkpoints to make the comparison pass.
 
 ## Out of scope
 
-- Automatically repairing or backfilling missing Parquet records.
-- Deleting duplicate raw records.
-- Resetting Spark checkpoints.
-- Comparing historical trades with Coinbase REST.
-- Proving historical WebSocket envelope or heartbeat completeness.
-- Building a dashboard or scheduled alert.
-- Curated-layer deduplication.
+- Automatically publishing or backfilling missing trades
+- Marking data-quality incidents repaired
+- Scheduling reconciliation with Airflow
+- Reconstructing historical WebSocket envelopes or heartbeat sequences
+- Repairing intervals outside Coinbase's available REST history
+- Deleting raw source redeliveries
+- Curated-layer deduplication
+- Multi-exchange reconciliation
+- Trading decisions based on reconciliation results
 
 ## Follow-up story
 
-After the Kafka-to-Parquet audit is reliable, add Coinbase trade
-reconciliation. That story should compare archived `(symbol, source_event_id)`
-values with bounded Coinbase REST trade results and persist unresolved source
-gaps separately from Kafka-to-Parquet failures.
+Add idempotent backfill for confirmed reconciliation findings. Normalize each
+confirmed Coinbase trade through the shared `ExchangeTrade` model, reuse
+`event_id_for_trade()`, publish through `market.trades.raw.v1`, link the event to
+the reconciliation run or incident, and mark the finding resolved only after a
+bounded follow-up proves that the identity reached raw Parquet exactly once by
+Kafka position.
 
 ## Definition of done
 
-The story is complete when a developer can run one documented command and get
-a deterministic pass/fail report showing whether every retained Kafka record
-in the captured range exists exactly once in raw Parquet, without modifying the
-pipeline data being audited.
+The story is complete when an operator can provide one symbol and bounded UTC
+interval, receive a deterministic pass, gaps-found, or unresolved result backed
+by safely persisted identity findings, and rerun the same comparison without
+changing Kafka, raw Parquet, or Spark checkpoints.

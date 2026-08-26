@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "crypto-exchange-adapters",
+    "crypto-historical-backfill",
     "crypto-trading-collector",
 ]
 
@@ -105,6 +106,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "websockets", specifier = ">=14,<16" }]
+
+[[package]]
+name = "crypto-historical-backfill"
+version = "0.1.0"
+source = { editable = "apps/historical_backfill" }
+dependencies = [
+    { name = "boto3" },
+    { name = "crypto-exchange-adapters" },
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", specifier = ">=1.40,<2" },
+    { name = "crypto-exchange-adapters", editable = "packages/exchange_adapters" },
+    { name = "pyarrow", specifier = ">=21,<24" },
+]
 
 [[package]]
 name = "crypto-trading-collector"

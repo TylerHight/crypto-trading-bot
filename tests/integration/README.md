@@ -17,3 +17,15 @@ $env:RUN_INTEGRATION_TESTS = "1"
 .\.venv\Scripts\python.exe -m pytest -q tests\integration\test_raw_market_trades_pipeline.py
 Remove-Item Env:RUN_INTEGRATION_TESTS
 ```
+
+The Coinbase reconciliation integration test uses a local stub HTTP server and
+temporary Parquet/report directories. It proves that one REST-only identity is
+persisted with exit code `2` while the raw fixture remains byte-for-byte
+unchanged. It never calls Coinbase, Kafka, or shared MinIO data:
+
+```powershell
+$env:RUN_RECONCILIATION_INTEGRATION_TESTS = "1"
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests\integration\test_coinbase_trade_reconciliation.py
+Remove-Item Env:RUN_RECONCILIATION_INTEGRATION_TESTS
+```

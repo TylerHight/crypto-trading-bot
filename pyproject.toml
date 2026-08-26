@@ -1,6 +1,7 @@
 [tool.uv.workspace]
 members = [
     "apps/collector",
+    "apps/historical_backfill",
     "packages/exchange_adapters",
 ]
 

@@ -330,6 +330,69 @@ smaller or larger bounded finding sample when necessary:
 Do not delete checkpoints or Parquet files to make a failed audit pass. Preserve
 the JSON report and relevant service logs before investigating recovery.
 
+### 8. Reconcile a suspicious interval against Coinbase REST
+
+Use reconciliation only after the raw integrity audit passes. Save the complete
+audit output; the reconciler extracts the `AUDIT_REPORT_JSON=` line and requires
+its topic to be `market.trades.raw.v1` and its completion time to be at or after
+the interval being checked:
+
+```powershell
+.\scripts\run_raw_integrity_audit.ps1 2>&1 |
+  Tee-Object -FilePath .\raw-integrity-audit.txt
+if ($LASTEXITCODE -ne 0) {
+  throw "Raw integrity must pass before Coinbase reconciliation."
+}
+```
+
+Install the bounded application and configure local MinIO access:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e .\packages\exchange_adapters
+.\.venv\Scripts\python.exe -m pip install -e .\apps\historical_backfill
+$env:RECONCILIATION_S3_ENDPOINT = "http://127.0.0.1:9000"
+$env:RECONCILIATION_S3_ACCESS_KEY = "minioadmin"
+$env:RECONCILIATION_S3_SECRET_KEY = "minioadmin"
+```
+
+Choose the smallest UTC interval supported by a sequence-gap, heartbeat-silence,
+disconnect, or reconnect observation. The default maximum is 15 minutes:
+
+```powershell
+.\.venv\Scripts\reconcile-coinbase-trades.exe `
+  --symbol BTC-USD `
+  --start-at 2026-08-25T14:00:00Z `
+  --end-at 2026-08-25T14:05:00Z `
+  --raw-integrity-report .\raw-integrity-audit.txt
+```
+
+The command reads only overlapping raw `event_date`/`event_hour` partitions. It
+writes an append-only report beneath
+`s3a://crypto-data/reconciliation/coinbase-trades/reports/`. When complete REST
+coverage identifies missing archive trades, it also writes the complete safe
+identity list beneath `findings/`. Neither document contains trade payloads,
+prices, sizes, API authorization, storage credentials, or Kafka values.
+
+Interpret exit codes and states as follows:
+
+- `0`, `passed`: complete coverage and no REST-only trade identities.
+- `2`, `gaps_found`: complete coverage and confirmed REST-only identities;
+  preserve the report and investigate each identity.
+- `3`, `unresolved_*` or `failed_*`: do not treat the comparison as complete.
+  Check raw-audit freshness, REST result limits, request caps, empty responses,
+  malformed archive values, rate limits, and endpoint history availability.
+- Other nonzero values indicate invalid arguments or an unexpected job failure.
+
+Coinbase documents the current endpoint and its `product_id`, `limit`, `start`,
+and `end` inputs in the [Get Public Market Trades reference](https://docs.cdp.coinbase.com/api-reference/advanced-trade-api/rest-api/public/get-public-market-trades).
+Responses at the configured limit are treated as potentially truncated and
+split into smaller windows. An empty response never produces a passing result by
+itself.
+
+This story does not repair findings. Do not publish a missing trade, delete raw
+data, or reset a checkpoint. Idempotent backfill is a separate follow-up after
+the REST coverage and identity have been reviewed.
+
 ## Routine monitoring
 
 Follow the two application processes:
