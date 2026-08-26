@@ -14,7 +14,7 @@ from .exchange_client import TradeSource
 from .models import (
     MarketDataQualityEvent,
     MarketTradeRawEvent,
-    event_id_for_trade,
+    market_trade_event,
 )
 from .producer import KafkaEventPublisher
 
@@ -24,19 +24,12 @@ LOGGER = logging.getLogger(__name__)
 def build_event(trade: ExchangeTrade) -> MarketTradeRawEvent:
     """Convert an exchange-neutral trade into the canonical Kafka event."""
 
-    return MarketTradeRawEvent(
-        event_id=event_id_for_trade(
-            exchange=trade.exchange,
-            symbol=trade.symbol,
-            source_event_id=trade.source_event_id,
-        ),
+    return market_trade_event(
         exchange=trade.exchange,
         symbol=trade.symbol,
-        event_time=trade.event_time,
         source_event_id=trade.source_event_id,
+        event_time=trade.event_time,
         source_sequence=trade.source_sequence,
-        correlation_id=None,
-        causation_id=None,
         payload=trade.raw_payload,
     )
 

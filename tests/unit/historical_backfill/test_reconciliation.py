@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from uuid import UUID
 
 import pytest
@@ -216,6 +217,7 @@ def test_persistence_writes_full_findings_and_is_append_only(tmp_path) -> None:
     report = json.loads(report_path.read_text())
     findings = json.loads(findings_path.read_text())
     assert report["report_uri"] == str(report_path)
+    assert report["findings_sha256"] == sha256(findings_path.read_bytes()).hexdigest()
     assert len(findings["missing_from_archive"]) == 3
     assert len(persisted.report["samples"]["missing_from_archive"]) == 1
 

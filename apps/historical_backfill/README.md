@@ -24,6 +24,7 @@ unresolved rather than producing a false pass.
 Install the workspace package for local development:
 
 ```powershell
+python -m pip install -e .\packages\domain
 python -m pip install -e .\packages\exchange_adapters
 python -m pip install -e .\apps\historical_backfill
 ```
@@ -56,3 +57,37 @@ Exit codes are:
 Reports are written under `reports/event_date=YYYY-MM-DD/`. Full confirmed safe
 identity findings are separately written under `findings/event_date=YYYY-MM-DD/`.
 Both filenames use a unique run ID and append-only creation.
+
+## Confirmed-gap backfill
+
+`backfill-coinbase-trades` accepts exactly one reconciliation report. It checks
+the linked findings digest, run ID, key, count and configured prefix; re-runs
+bounded Coinbase coverage; and checks raw Parquet immediately before any send.
+The default mode is a non-publishing dry run:
+
+```powershell
+backfill-coinbase-trades `
+  --reconciliation-report `
+    s3a://crypto-data/reconciliation/coinbase-trades/reports/event_date=2026-08-25/<run-id>.json
+```
+
+After reviewing the dry-run JSON, explicitly publish through the canonical
+Kafka-to-Parquet path:
+
+```powershell
+backfill-coinbase-trades `
+  --reconciliation-report <report-uri> `
+  --apply
+```
+
+Apply mode creates one conditional claim per finding, waits for every Kafka
+acknowledgement, durably records its topic/partition/offset, and resolves only
+after that exact position appears once in raw Parquet. A timeout remains
+`published_pending_archive`; retrying checks Parquet and the durable receipt and
+does not blindly publish. A claim without a receipt is
+`unresolved_ambiguous_publication` and requires investigation.
+
+Exit codes are `0` for fully resolved/no action, `2` for dry-run-ready work,
+`3` for partial, retryable, pending or ambiguous outcomes, and `4` for invalid
+or permanent input. State documents contain only safe identities and Kafka
+positions, never complete payloads or credentials.

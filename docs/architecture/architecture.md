@@ -126,7 +126,7 @@ flowchart LR
     streamJob --> curated
     streamJob --> candleTopic
 
-    rest --> backfill --> raw
+    rest --> backfill --> kafka
     raw --> replayJob --> curated
 
     curated --> catalog

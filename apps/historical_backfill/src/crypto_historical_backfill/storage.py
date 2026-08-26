@@ -63,6 +63,29 @@ class ObjectStorage:
         response = self._s3().get_object(Bucket=location.bucket, Key=location.key)
         return response["Body"].read()
 
+    def try_read_bytes(self, uri: str) -> bytes | None:
+        """Read an object, returning none only when it is definitely absent."""
+
+        try:
+            return self.read_bytes(uri)
+        except FileNotFoundError:
+            return None
+        except Exception as error:
+            response = getattr(error, "response", None)
+            code = (
+                response.get("Error", {}).get("Code")
+                if isinstance(response, dict)
+                else None
+            )
+            status = (
+                response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if isinstance(response, dict)
+                else None
+            )
+            if code in {"404", "NoSuchKey", "NotFound"} or status == 404:
+                return None
+            raise
+
     def write_bytes_append_only(
         self,
         uri: str,
@@ -84,6 +107,36 @@ class ObjectStorage:
             ContentType=content_type,
             IfNoneMatch="*",
         )
+
+    def try_write_bytes_append_only(
+        self,
+        uri: str,
+        body: bytes,
+        *,
+        content_type: str,
+    ) -> bool:
+        """Create an object only if absent; return false when it already exists."""
+
+        try:
+            self.write_bytes_append_only(uri, body, content_type=content_type)
+        except FileExistsError:
+            return False
+        except Exception as error:
+            response = getattr(error, "response", None)
+            code = (
+                response.get("Error", {}).get("Code")
+                if isinstance(response, dict)
+                else None
+            )
+            status = (
+                response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if isinstance(response, dict)
+                else None
+            )
+            if code in {"412", "PreconditionFailed"} or status == 412:
+                return False
+            raise
+        return True
 
     def list_parquet(self, prefix_uri: str) -> list[str]:
         location = parse_location(prefix_uri)

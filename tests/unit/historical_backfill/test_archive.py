@@ -1,7 +1,12 @@
 import json
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
 
-from crypto_historical_backfill.archive import scan_archived_rows
+import pyarrow as pa
+import pyarrow.parquet as pq
+from crypto_historical_backfill.archive import RawParquetArchive, scan_archived_rows
+from crypto_historical_backfill.storage import ObjectStorage, StorageSettings
 
 START = datetime(2026, 8, 25, 14, 0, tzinfo=UTC)
 
@@ -93,3 +98,36 @@ def test_malformed_values_are_counted_and_samples_are_capped() -> None:
     assert scan.malformed_values == 3
     assert len(scan.malformed_samples) == 2
     assert all("kafka_value" not in sample for sample in scan.malformed_samples)
+
+
+def test_raw_archive_counts_an_exact_kafka_position(tmp_path: Path) -> None:
+    rows = [row(10, "one", START), row(11, "two", START)]
+    table = pa.Table.from_pylist(rows)
+    output = BytesIO()
+    pq.write_table(table, output)
+    parquet_path = (
+        tmp_path
+        / "event_date=2026-08-25"
+        / "event_hour=14"
+        / "part.parquet"
+    )
+    storage = ObjectStorage(StorageSettings())
+    storage.write_bytes_append_only(
+        str(parquet_path), output.getvalue(), content_type="application/octet-stream"
+    )
+    archive = RawParquetArchive(storage, str(tmp_path))
+
+    assert archive.count_position(
+        topic="market.trades.raw.v1",
+        partition=0,
+        offset=11,
+        start_at=START,
+        end_at=START + timedelta(minutes=1),
+    ) == 1
+    assert archive.count_position(
+        topic="market.trades.raw.v1",
+        partition=1,
+        offset=11,
+        start_at=START,
+        end_at=START + timedelta(minutes=1),
+    ) == 0

@@ -9,11 +9,14 @@ description = "Bounded market-data reconciliation and historical backfill tools"
 requires-python = ">=3.11"
 dependencies = [
     "boto3>=1.40,<2",
+    "confluent-kafka>=2.3,<4",
     "crypto-exchange-adapters",
+    "crypto-trading-domain",
     "pyarrow>=21,<24",
 ]
 
 [project.scripts]
+backfill-coinbase-trades = "crypto_historical_backfill.backfill_coinbase_trades:main"
 reconcile-coinbase-trades = "crypto_historical_backfill.reconcile_coinbase_trades:main"
 
 [tool.hatch.build.targets.wheel]
@@ -21,6 +24,7 @@ packages = ["src/crypto_historical_backfill"]
 
 [tool.uv.sources]
 crypto-exchange-adapters = { workspace = true }
+crypto-trading-domain = { workspace = true }
 
 [tool.ruff]
 line-length = 100

@@ -11,6 +11,7 @@ members = [
     "crypto-exchange-adapters",
     "crypto-historical-backfill",
     "crypto-trading-collector",
+    "crypto-trading-domain",
 ]
 
 [[package]]
@@ -113,14 +114,18 @@ version = "0.1.0"
 source = { editable = "apps/historical_backfill" }
 dependencies = [
     { name = "boto3" },
+    { name = "confluent-kafka" },
     { name = "crypto-exchange-adapters" },
+    { name = "crypto-trading-domain" },
     { name = "pyarrow" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.40,<2" },
+    { name = "confluent-kafka", specifier = ">=2.3,<4" },
     { name = "crypto-exchange-adapters", editable = "packages/exchange_adapters" },
+    { name = "crypto-trading-domain", editable = "packages/domain" },
     { name = "pyarrow", specifier = ">=21,<24" },
 ]
 
@@ -131,6 +136,7 @@ source = { editable = "apps/collector" }
 dependencies = [
     { name = "confluent-kafka" },
     { name = "crypto-exchange-adapters" },
+    { name = "crypto-trading-domain" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
@@ -152,6 +158,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'dev'", specifier = ">=1.40,<2" },
     { name = "confluent-kafka", specifier = ">=2.3,<4" },
     { name = "crypto-exchange-adapters", editable = "packages/exchange_adapters" },
+    { name = "crypto-trading-domain", editable = "packages/domain" },
     { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4,<5" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1,<2" },
     { name = "pyarrow", marker = "extra == 'dev'", specifier = ">=21,<24" },
@@ -163,6 +170,17 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6,<1" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "crypto-trading-domain"
+version = "0.1.0"
+source = { editable = "packages/domain" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2,<3" }]
 
 [[package]]
 name = "iniconfig"

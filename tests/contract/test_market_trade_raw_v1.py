@@ -14,15 +14,24 @@ def validator() -> Draft202012Validator:
     return Draft202012Validator(schema, format_checker=FormatChecker())
 
 
-def valid_fixture() -> dict[str, object]:
+def valid_fixture(name: str = "valid-example.json") -> dict[str, object]:
     return json.loads(
-        (CONTRACT_DIRECTORY / "valid-example.json").read_text(encoding="utf-8")
+        (CONTRACT_DIRECTORY / name).read_text(encoding="utf-8")
     )
 
 
 def test_valid_fixture_matches_json_schema() -> None:
     errors = sorted(
         validator().iter_errors(valid_fixture()),
+        key=lambda error: error.json_path,
+    )
+
+    assert errors == []
+
+
+def test_backfill_fixture_matches_same_json_schema() -> None:
+    errors = sorted(
+        validator().iter_errors(valid_fixture("valid-backfill-example.json")),
         key=lambda error: error.json_path,
     )
 

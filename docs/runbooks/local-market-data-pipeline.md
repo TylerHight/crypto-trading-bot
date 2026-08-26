@@ -389,9 +389,40 @@ Responses at the configured limit are treated as potentially truncated and
 split into smaller windows. An empty response never produces a passing result by
 itself.
 
-This story does not repair findings. Do not publish a missing trade, delete raw
-data, or reset a checkpoint. Idempotent backfill is a separate follow-up after
-the REST coverage and identity have been reviewed.
+### 9. Dry-run and apply reviewed confirmed gaps
+
+Preserve the reconciliation report, linked findings, and raw-integrity output.
+Keep the raw sink healthy, then run the backfill without `--apply`:
+
+```powershell
+$report = "s3a://crypto-data/reconciliation/coinbase-trades/reports/event_date=2026-08-25/<run-id>.json"
+.\.venv\Scripts\backfill-coinbase-trades.exe `
+  --reconciliation-report $report
+```
+
+Exit `2` with `dry_run_ready` means the current complete REST result still
+contains a finding and the archive still lacks it. Review all bounded samples,
+the target `market.trades.raw.v1` topic, and raw-sink health before mutation.
+Then apply that same report explicitly:
+
+```powershell
+.\.venv\Scripts\backfill-coinbase-trades.exe `
+  --reconciliation-report $report `
+  --apply
+```
+
+Preserve the terminal `BACKFILL_REPORT_JSON=` line and append-only documents
+under `s3a://crypto-data/backfill/coinbase-trades/`. A finding is resolved only
+when its acknowledged topic, partition, and offset is observed exactly once in
+raw Parquet. Re-run apply after archival; it should report
+`resolved_no_action_needed` and publish nothing.
+
+For `published_pending_archive`, check raw-sink lag and retry the command only
+after preserving the receipt. It will verify that receipt instead of
+republishing. For `unresolved_ambiguous_publication`, preserve Kafka and sink
+logs and investigate the claim/receipt window; never delete the claim, raw
+Parquet, Kafka records, or Spark checkpoint to force a retry. Finally run the
+Kafka-to-Parquet integrity audit again and preserve its passing report.
 
 ## Routine monitoring
 

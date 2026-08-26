@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crypto-trading-domain"
+version = "0.1.0"
+description = "Exchange-neutral canonical crypto trading domain models"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2,<3"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/crypto_trading_domain"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

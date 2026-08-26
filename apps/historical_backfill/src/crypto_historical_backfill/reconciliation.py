@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -8,6 +9,12 @@ from crypto_exchange_adapters.coinbase_rest import CoinbaseTradeCoverage
 
 from .archive import ArchivedTrade, ArchiveScan
 from .storage import ObjectStorage, child_uri
+
+
+def canonical_json_bytes(payload: object) -> bytes:
+    """Serialize durable linked inputs deterministically for hashing."""
+
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def utc_text(value: datetime) -> str:
@@ -196,15 +203,13 @@ def persist_outcome(
             "reconciliation_key": report["reconciliation_key"],
             "missing_from_archive": list(outcome.confirmed_missing),
         }
+        findings_bytes = canonical_json_bytes(findings_document)
         storage.write_bytes_append_only(
             findings_uri,
-            json.dumps(
-                findings_document,
-                indent=2,
-                sort_keys=True,
-            ).encode("utf-8"),
+            findings_bytes,
             content_type="application/json",
         )
+        report["findings_sha256"] = sha256(findings_bytes).hexdigest()
 
     report_uri = child_uri(
         output_base,
@@ -213,6 +218,7 @@ def persist_outcome(
         f"{run_id}.json",
     )
     report["findings_uri"] = findings_uri
+    report.setdefault("findings_sha256", None)
     report["report_uri"] = report_uri
     storage.write_bytes_append_only(
         report_uri,

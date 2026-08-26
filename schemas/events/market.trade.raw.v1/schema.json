@@ -58,7 +58,7 @@
       "minimum": 0
     },
     "producer": {
-      "const": "apps.collector"
+      "enum": ["apps.collector", "apps.historical_backfill"]
     },
     "trace_id": {
       "type": "string",

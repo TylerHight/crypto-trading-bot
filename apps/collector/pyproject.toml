@@ -9,6 +9,7 @@ description = "Public crypto market-trade WebSocket collector"
 requires-python = ">=3.11"
 dependencies = [
     "confluent-kafka>=2.3,<4",
+    "crypto-trading-domain",
     "crypto-exchange-adapters",
     "pydantic>=2,<3",
     "pydantic-settings>=2,<3",
@@ -33,6 +34,7 @@ crypto-collector = "crypto_trading_collector.main:main"
 packages = ["src/crypto_trading_collector"]
 
 [tool.uv.sources]
+crypto-trading-domain = { workspace = true }
 crypto-exchange-adapters = { workspace = true }
 
 [tool.pytest.ini_options]

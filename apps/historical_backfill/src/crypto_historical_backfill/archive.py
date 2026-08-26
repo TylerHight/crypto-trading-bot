@@ -187,6 +187,40 @@ class RawParquetArchive:
         end_at: datetime,
         sample_limit: int,
     ) -> ArchiveScan:
+        rows = self._read_rows(start_at=start_at, end_at=end_at)
+        return scan_archived_rows(
+            rows,
+            symbol=symbol,
+            start_at=start_at,
+            end_at=end_at,
+            sample_limit=sample_limit,
+        )
+
+    def count_position(
+        self,
+        *,
+        topic: str,
+        partition: int,
+        offset: int,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> int:
+        """Count an exact acknowledged Kafka position in overlapping raw partitions."""
+
+        return sum(
+            1
+            for row in self._read_rows(start_at=start_at, end_at=end_at)
+            if row.get("kafka_topic") == topic
+            and row.get("kafka_partition") == partition
+            and row.get("kafka_offset") == offset
+        )
+
+    def _read_rows(
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[Mapping[str, Any]]:
         parquet_uris: set[str] = set()
         hour = start_at.replace(minute=0, second=0, microsecond=0)
         while hour < end_at:
@@ -214,10 +248,4 @@ class RawParquetArchive:
                     "Raw archive object has an incompatible Parquet contract"
                 ) from error
             rows.extend(table.to_pylist())
-        return scan_archived_rows(
-            rows,
-            symbol=symbol,
-            start_at=start_at,
-            end_at=end_at,
-            sample_limit=sample_limit,
-        )
+        return rows

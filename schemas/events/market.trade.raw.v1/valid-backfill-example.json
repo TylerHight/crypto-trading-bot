@@ -1,0 +1,20 @@
+{
+  "event_id": "3df00381-f849-5ff6-bef0-69aef86cb35a",
+  "event_type": "market.trade.raw",
+  "schema_version": "v1",
+  "exchange": "coinbase",
+  "symbol": "BTC-USD",
+  "event_time": "2026-08-25T14:00:01Z",
+  "ingested_at": "2026-08-26T15:00:00Z",
+  "source_event_id": "123456789",
+  "source_sequence": null,
+  "producer": "apps.historical_backfill",
+  "trace_id": "8b3a4086-f5cf-4c10-90ae-3dbeb56398cc",
+  "correlation_id": null,
+  "causation_id": "e32bf4ea-4e84-4d6a-91dc-7d651a49252c",
+  "payload": {
+    "trade_id": "123456789",
+    "product_id": "BTC-USD",
+    "time": "2026-08-25T14:00:01Z"
+  }
+}
