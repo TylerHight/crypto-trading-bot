@@ -9,3 +9,9 @@ broker beginning/end offsets for every current partition before comparing that
 Kafka snapshot with raw Parquet. It exits with `0` when archive integrity passes
 and `2` when records are missing, Kafka positions are duplicated, or archived
 values are malformed.
+
+`curate_market_trades.py` is a bounded, manifest-backed batch entry point. It
+accepts only a passing raw-integrity snapshot, defaults to a no-write dry run,
+and delegates all record validation and deduplication to the shared transform.
+The manifest is the sole publication boundary and is written after output
+schema, uniqueness, decimal, partition, and count checks pass.

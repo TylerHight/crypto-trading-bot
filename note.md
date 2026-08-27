@@ -1,417 +1,524 @@
-# User story: Restore confirmed Coinbase trade gaps idempotently
+# User story: Build a curated, deduplicated market-trade dataset
 
 ## Story
 
-As a market-data pipeline operator,
-I want to backfill only Coinbase trades that a completed reconciliation has
-confirmed are missing from the raw archive,
-so that recoverable WebSocket source gaps can be repaired through the canonical
-Kafka-to-Parquet path without rewriting raw data or creating logically new
-trades when a repair is retried.
+As a market-data consumer,
+I want raw Kafka trade records parsed, normalized, validated, and deduplicated
+into a versioned curated Parquet dataset,
+so that analytics, candles, backtests, and future trading logic operate on one
+logical row per exchange trade instead of transport-level deliveries.
 
 ## Why this is next
 
-The pipeline now has two distinct integrity checks:
+The raw pipeline and its recovery path are now proven end to end:
 
 ```text
-Kafka position audit:
-Kafka -> raw Parquet
-
-Coinbase reconciliation:
-Coinbase REST trade identity -> archived trade identity
+Coinbase WebSocket / reviewed REST backfill
+    -> canonical Kafka event
+    -> immutable raw Parquet
+    -> exact Kafka-position audit
 ```
 
-The first identifies archive failures. The second identifies Coinbase trades
-that are absent before Kafka. Neither check repairs data, which is the correct
-safe starting point.
-
-The next increment should restore only reviewed, confirmed reconciliation
-findings. It must publish through `market.trades.raw.v1` so the existing raw
-sink, checkpoint, and Kafka-position audit remain the authoritative archive
-boundary. Direct Parquet writes would bypass that evidence and are forbidden.
-
-## Dependencies
-
-A backfill may run only when all of the following are available:
-
-1. A persisted reconciliation report with status `gaps_found`.
-2. Its referenced append-only findings document.
-3. Matching reconciliation and findings run IDs and reconciliation keys.
-4. A complete Coinbase REST result for the original symbol and interval.
-5. A passing Kafka-to-Parquet raw-integrity audit completed after that interval.
-
-The job must reject an arbitrary list of trade IDs. Confirmed reconciliation
-output is the only supported repair input.
-
-## Important delivery guarantee
-
-Kafka producer idempotence prevents duplicate sends within a producer session;
-it does not provide exactly-once behavior across every process crash and retry.
-The repair guarantee for this story is therefore:
+The final local audit after backfill validation passed with:
 
 ```text
-stable logical identity + bounded at-least-once publication + explicit verification
+Kafka records:             1,943,360
+Parquet records:           1,943,360
+Missing Kafka positions:   0
+Duplicate Kafka positions: 0
+Invalid event values:      0
+Duplicate logical IDs:     28,316 (warning)
 ```
 
-Every attempt must reuse the deterministic event ID derived from:
+That is the right raw-layer behavior: every accepted Kafka delivery is retained,
+including source redelivery. It is not yet the right interface for analysis.
+Consumers should not repeatedly decode JSON, interpret exchange strings, or
+independently decide how to handle duplicate deterministic event IDs.
+
+The project has spent enough time on additional incident-control machinery for
+now. A durable incident registry and Airflow automation are deferred until the
+pipeline produces queryable market data and a downstream consumer needs that
+operational sophistication.
+
+## Outcome
+
+Produce an immutable curated snapshot with:
+
+- One validated logical row per deterministic `event_id`.
+- Fixed-precision price and size values.
+- Explicit source and provenance fields.
+- Deterministic handling of exact duplicates and conflicting duplicates.
+- Safe quarantine records for invalid input.
+- A manifest that identifies the exact raw Kafka-position snapshot used.
+- The same transformation logic available to later batch replay and streaming
+  entry points.
+
+This story creates curated trades only. One-minute candles are the next story.
+
+## Architecture decisions
+
+### Raw remains immutable
+
+Do not rewrite, compact, delete, or deduplicate the raw dataset. Curated output
+is a derived projection and may be regenerated from preserved raw Kafka records.
+
+### Start with a bounded batch snapshot
+
+Implement the shared Spark DataFrame transformation now, but materialize the
+first curated dataset with a bounded batch job rather than adding another
+continuous service immediately.
+
+The batch job must consume a passing raw-integrity audit report that freezes the
+Kafka topic and exclusive ending offset for every partition. It then reads raw
+Parquet records only within those position bounds. This makes the snapshot
+repeatable even if the collector continues producing later records.
+
+Future streaming and replay entry points must call the same transformation
+module rather than reimplement parsing rules.
+
+### Partition curated data by market event time
+
+Raw Parquet is partitioned by Kafka ingestion time. Curated trades should be
+partitioned by the normalized trade `event_time`:
 
 ```text
-exchange + symbol + source_event_id
+event_date=YYYY-MM-DD/
 ```
 
-Before publishing, the job checks whether the source identity is already in raw
-Parquet. After Kafka acknowledges a publish, the job records the returned topic,
-partition, and offset and waits for that exact Kafka position to appear in raw
-Parquet. A retry checks the archive again before publishing.
+Retain `kafka_timestamp` and `ingested_at` as separate columns for latency and
+late-arrival analysis. A historical backfill therefore lands in its historical
+curated event date while preserving the later Kafka ingestion timestamp.
 
-If a process fails after Kafka accepts a record but before the acknowledgement
-or state is durably recorded, the outcome is ambiguous. The job must preserve
-that state and verify Kafka/Parquet before deciding whether another publish is
-safe. It must never silently report exactly-once delivery.
+### Curated snapshots are append-only publications
 
-## Canonical event contract prerequisite
+Write each completed snapshot beneath a unique run directory and publish an
+append-only manifest only after validation succeeds:
 
-The canonical event model and `event_id_for_trade()` currently belong to the
-collector application. One application must not import another application.
+```text
+curated/market_trades/v1/runs/<run-id>/event_date=YYYY-MM-DD/*.parquet
+curated/market_trades/v1/manifests/<snapshot-key>/<run-id>.json
+```
 
-Move the exchange-neutral `MarketTradeRawEvent`, deterministic trade identity,
-and event-construction behavior into a shared package that both the live
-collector and historical backfill application can use. The shared package must
-not depend on Kafka, Spark, boto3, or an exchange SDK.
+Do not expose a partial staging directory as a completed snapshot. Consumers use
+the manifest URI supplied by the job. A catalog/current-pointer mechanism can be
+added with the later analytics-platform story.
 
-The checked-in `market.trade.raw.v1` contract currently identifies
-`apps.collector` as the only producer. Extend it compatibly to permit the
-explicit known producer `apps.historical_backfill` while keeping all existing
-collector events valid. Add contract fixtures for both producers and document
-that producer provenance is not part of trade identity.
+## Canonical curated schema
 
-Do not create a separate backfill topic or raw Parquet writer in this story.
+Define and document a checked-in v1 schema containing at least:
 
-## Scope
+```text
+event_id                 UUID/string, not null
+exchange                 normalized lowercase string, not null
+symbol                   normalized uppercase string, not null
+source_event_id          string, not null
+event_time               UTC timestamp, not null
+ingested_at              UTC timestamp, not null
+kafka_timestamp          UTC timestamp, not null
+price                    decimal(38, 18), not null
+size                     decimal(38, 18), not null
+notional                 decimal(38, 18), not null
+source_side              BUY or SELL, not null
+source_sequence          nonnegative integer or null
+producer                 known producer provenance, not null
+trace_id                 UUID/string, not null
+correlation_id           UUID/string or null
+causation_id             UUID/string or null
+kafka_topic              string, not null
+kafka_partition          nonnegative integer, not null
+kafka_offset             nonnegative integer, not null
+curated_schema_version   v1
+curated_at               UTC timestamp, not null
+event_date               date derived from event_time
+```
 
-Create a manually runnable, dry-run-first command that:
+Use decimal arithmetic throughout. Do not convert prices, sizes, or notionals to
+binary floating point.
 
-1. Accepts exactly one reconciliation report URI.
-2. Loads the referenced findings document and validates their linkage.
-3. Rejects reports that are not `gaps_found`, are malformed, or lack confirmed
-   findings.
-4. Re-runs bounded Coinbase REST coverage for the report's original symbol and
-   `[start_at, end_at)` interval.
-5. Requires every persisted finding to still exist in the complete REST result.
-6. Reads the relevant raw Parquet partitions immediately before publication.
-7. Classifies findings already present in the archive as
-   `skipped_already_archived`.
-8. Builds missing trades with the same shared canonical model used by live
-   collection.
-9. Reuses `event_id_for_trade()` and sets `source_sequence` to `null` when REST
-   does not provide the WebSocket envelope sequence.
-10. Publishes only when the operator supplies an explicit `--apply` flag.
-11. Uses the normal symbol-based Kafka key and existing event/schema headers.
-12. Enables Kafka idempotence and requires an acknowledgement for every send.
-13. Records the acknowledged topic, partition, and offset without recording
-    credentials or complete payloads.
-14. Waits for each acknowledged Kafka position to appear in raw Parquet.
-15. Writes append-only attempt, finding-state, and terminal run documents.
-16. Produces bounded console output and one machine-readable JSON line.
+Call the Coinbase field `source_side` until its exact maker/taker semantics are
+documented. Do not rename it to buyer side, seller side, aggressor side, or trade
+direction based on an assumption.
 
-The command must not rewrite Parquet, alter Spark checkpoints, delete Kafka
-records, or repair findings from a different reconciliation run.
+Producer provenance is retained but is not part of logical trade identity.
+
+## Input contract validation
+
+For each raw Kafka row:
+
+1. Require non-null topic, partition, offset, Kafka timestamp, key, value, and
+   required event headers.
+2. Decode `kafka_value` as strict UTF-8 JSON.
+3. Validate the complete `market.trade.raw.v1` envelope.
+4. Require the configured canonical topic and supported producer.
+5. Require aware timestamps and normalize them to UTC.
+6. Require the Kafka key to equal `<exchange-lowercase>:<SYMBOL-UPPERCASE>`.
+7. Require headers to match the event type and schema version in the value.
+8. Validate the Coinbase payload fields used by the curated schema:
+   - `trade_id`
+   - `product_id`
+   - `price`
+   - `size`
+   - `side`
+   - `time`
+9. Require payload identity and event time to match the canonical envelope.
+10. Parse price and size as positive fixed-precision decimals within the schema
+    bounds.
+11. Normalize side to the documented `BUY`/`SELL` enum without guessing missing
+    values.
+12. Recompute `notional = price * size` using explicit decimal scale and rounding
+    policy.
+
+Do not silently coerce malformed, missing, negative, zero, overflowing, or
+non-finite numeric values.
+
+## Quarantine behavior
+
+Invalid inputs must not enter curated trades. Write a separate immutable
+quarantine dataset with only safe diagnostic fields:
+
+```text
+curation_run_id
+kafka_topic
+kafka_partition
+kafka_offset
+kafka_timestamp
+failure_code
+failure_field
+event_id_when_safe
+value_sha256
+quarantined_at
+```
+
+Do not store a second complete Kafka value, raw Coinbase payload, malformed
+message excerpt, authorization data, or credentials in quarantine.
+
+Use stable failure codes such as:
+
+```text
+invalid_utf8
+invalid_json
+invalid_envelope_contract
+invalid_kafka_key
+invalid_headers
+unsupported_exchange
+payload_identity_mismatch
+payload_time_mismatch
+invalid_price
+invalid_size
+invalid_side
+decimal_overflow
+conflicting_duplicate
+```
+
+Every invalid input increments exactly one primary quarantine reason. Reports may
+include bounded secondary diagnostics but must not inflate rejected-row counts.
+
+## Deterministic deduplication
+
+Deduplicate by canonical `event_id`, not by price/time proximity or Kafka
+position.
+
+### Exact logical duplicates
+
+When all immutable curated trade fields match for one event ID:
+
+- Emit one curated row.
+- Select the representative row deterministically by the lowest ordered
+  `(kafka_topic, kafka_partition, kafka_offset)`.
+- Record total deliveries and duplicate deliveries in the run report.
+- Preserve the selected Kafka provenance on the curated row.
+
+This covers Coinbase redelivery and a live/backfill record that represents the
+same source trade without creating a second logical fact.
+
+### Conflicting duplicates
+
+When one event ID maps to different immutable values such as symbol, source trade
+ID, event time, price, size, or source side:
+
+- Emit no curated row for that event ID.
+- Quarantine the group as `conflicting_duplicate`.
+- Include only safe identity, Kafka positions, differing field names, and hashes
+  in bounded evidence.
+- Make the run status unresolved or failed according to an explicit threshold.
+
+Never choose a winner from conflicting economic facts based only on latest
+arrival or producer name.
 
 ## Proposed entry point
 
-Add the command to `apps/historical_backfill`:
+Add a bounded Spark entry point such as:
 
 ```powershell
-python -m crypto_historical_backfill.backfill_coinbase_trades `
-  --reconciliation-report `
-    s3a://crypto-data/reconciliation/coinbase-trades/reports/event_date=2026-08-25/<run-id>.json
+python -m jobs.spark.entrypoints.curate_market_trades `
+  --raw-integrity-report <passing-audit-report> `
+  --raw-input s3a://crypto-data/raw/market_trade_raw/v1 `
+  --output s3a://crypto-data/curated/market_trades/v1 `
+  --quarantine-output s3a://crypto-data/quarantine/market_trades/v1
 ```
 
-That invocation is a dry run. It validates current source coverage and reports
-what would be published.
+Dry run is the default. It validates the audit snapshot, computes counts and
+samples, and writes no curated or quarantine data.
 
-Mutation requires the explicit flag:
+Publication requires:
 
 ```powershell
-python -m crypto_historical_backfill.backfill_coinbase_trades `
-  --reconciliation-report <report-uri> `
-  --apply
+python -m jobs.spark.entrypoints.curate_market_trades ... --apply
 ```
 
-Kafka, Coinbase, object-storage, retry, and verification-timeout settings should
-come from environment variables or bounded command options. Credentials must
-never appear in command examples, reports, logs, Kafka headers, or exception
-messages.
+Environment variables or bounded options should provide S3/MinIO settings,
+timeouts, maximum input rows when configured for local tests, sample limits,
+decimal precision, and output prefixes. Credentials must not appear in command
+examples or reports.
 
-## Input validation
+## Snapshot input validation
 
-Validate all persisted input before contacting Kafka:
+Before Spark writes output:
 
-- Report status is exactly `gaps_found`.
-- Report exchange is `coinbase`.
-- Symbol and UTC interval are present and within configured maximum bounds.
-- Findings URI is beneath the configured reconciliation findings prefix.
-- Report and findings contain the same run ID and reconciliation key.
-- Finding count matches `missing_from_archive`.
-- Every finding contains only the expected symbol, source trade ID, and aware
-  event timestamp.
-- Duplicate finding identities are rejected rather than silently collapsed.
-- Optional `incident_id` is retained as correlation metadata.
-- Raw-integrity evidence is passing, for `market.trades.raw.v1`, and new enough
-  to cover the original interval.
+- The raw-integrity report status is exactly `passed`.
+- Its topic is exactly `market.trades.raw.v1`.
+- Every partition has valid earliest and exclusive ending offsets.
+- Missing and duplicate Kafka-position counts are zero.
+- The report is beneath a configured evidence prefix, or a local file is allowed
+  only in explicit local-development mode.
+- The report digest is captured in the curation manifest.
+- The raw input and output prefixes are distinct.
+- Curated and quarantine prefixes are distinct.
+- The snapshot key derived from topic, partition bounds, transform version, and
+  schema version is deterministic.
 
-Add a SHA-256 digest of the canonical findings document to newly persisted
-reconciliation reports. Backfill must verify the digest when present. Reports
-created before the digest exists require an explicit compatibility mode and
-must remain dry-run-only until an operator reviews them.
-
-## Publication contract
-
-For each still-missing Coinbase trade, construct:
-
-```text
-event_type       = market.trade.raw
-schema_version   = v1
-exchange         = coinbase
-symbol           = normalized Coinbase product ID
-source_event_id  = Coinbase trade_id
-source_sequence  = null
-event_id         = event_id_for_trade(exchange, symbol, source_event_id)
-producer         = apps.historical_backfill
-correlation_id   = reconciliation incident_id, when present
-causation_id     = reconciliation run_id
-payload          = validated Coinbase REST trade object
-```
-
-Use the same Kafka key and headers as live collection:
-
-```text
-key:              coinbase:<SYMBOL>
-event_type:       market.trade.raw
-schema_version:   v1
-```
-
-Do not generate a new event ID on a retry. `ingested_at` and `trace_id` may be
-new per publication attempt; the deterministic trade identity must not change.
-
-## Finding state machine
-
-Track each confirmed identity independently:
-
-```text
-confirmed_missing
-dry_run_ready
-skipped_already_archived
-publish_claimed
-published_pending_archive
-resolved_backfilled
-unresolved_source_changed
-unresolved_ambiguous_publication
-failed_retryable
-failed_permanent
-```
-
-State rules:
-
-- `dry_run_ready`: current REST coverage still contains the finding and the
-  archive still does not.
-- `skipped_already_archived`: the source identity reached raw Parquet before
-  this attempt; no publish occurs.
-- `publish_claimed`: an append-only conditional claim prevents two repair
-  processes from intentionally publishing the same finding concurrently.
-- `published_pending_archive`: Kafka acknowledged the record and the receipt
-  contains its topic, partition, and offset.
-- `resolved_backfilled`: that exact Kafka position was observed once in raw
-  Parquet.
-- `unresolved_source_changed`: the finding is no longer present in a newly
-  complete Coinbase REST result or its immutable fields changed.
-- `unresolved_ambiguous_publication`: the process cannot determine whether a
-  publish succeeded and must not report resolution.
-
-A stale claim may be recovered only by first checking the archive and any
-durable Kafka receipt. Never resolve a finding solely because a claim exists.
+A rerun of the same successful snapshot key must return the existing manifest
+without writing another logical snapshot.
 
 ## Run states
 
-The terminal run status is derived from all findings:
+Use explicit states:
 
 ```text
 dry_run_ready
-resolved_no_action_needed
-resolved_backfilled
-partially_resolved
-unresolved
+published
+resolved_existing_snapshot
+unresolved_conflicting_duplicates
+failed_input_contract
 failed_retryable
 failed_permanent
 ```
 
-- `resolved_no_action_needed`: every finding was already archived before any
-  publish.
-- `resolved_backfilled`: every remaining finding was acknowledged and verified
-  at its exact Kafka position.
-- `partially_resolved`: at least one finding resolved and at least one did not.
-- No run may be `resolved_*` while an identity is pending, ambiguous, or failed.
+No run is `published` until:
 
-## Suggested terminal report
+1. Curated and quarantine writes complete.
+2. Output schemas are read back and validated.
+3. Curated `event_id` uniqueness is proven.
+4. Counts reconcile to the frozen raw input.
+5. The append-only manifest is durably created.
 
-```json
-{
-  "backfill_run_id": "8b3a4086-f5cf-4c10-90ae-3dbeb56398cc",
-  "reconciliation_run_id": "e32bf4ea-4e84-4d6a-91dc-7d651a49252c",
-  "reconciliation_key": "coinbase:BTC-USD:2026-08-25T14:00:00Z:2026-08-25T14:05:00Z:v3",
-  "mode": "apply",
-  "symbol": "BTC-USD",
-  "started_at": "2026-08-26T15:00:00Z",
-  "completed_at": "2026-08-26T15:00:12Z",
-  "status": "resolved_backfilled",
-  "confirmed_findings": 1,
-  "already_archived": 0,
-  "publish_attempted": 1,
-  "kafka_acknowledged": 1,
-  "archive_verified": 1,
-  "ambiguous": 0,
-  "failed": 0,
-  "samples": {
-    "resolved_backfilled": [
-      {
-        "symbol": "BTC-USD",
-        "source_event_id": "123456789",
-        "kafka_topic": "market.trades.raw.v1",
-        "kafka_partition": 0,
-        "kafka_offset": 1909736
-      }
-    ]
-  }
-}
+## Count reconciliation
+
+The terminal report and manifest must prove:
+
+```text
+raw_rows_in_snapshot
+  = valid_deliveries
+  + quarantined_input_rows
+
+valid_deliveries
+  = curated_logical_trades
+  + exact_duplicate_deliveries
+  + conflicting_duplicate_deliveries
 ```
 
-Samples must be capped. Do not include complete Coinbase payloads, prices,
-sizes, Kafka values, authorization headers, or credentials.
+Define the conflicting-group counting policy precisely so the equations remain
+unambiguous and tested.
+
+Also report:
+
+- Input topic and partition offset bounds.
+- Unique event IDs examined.
+- Curated rows by exchange, symbol, source producer, and event date.
+- Minimum and maximum event, ingestion, and Kafka timestamps.
+- Late-arrival latency percentiles using bounded aggregations.
+- Quarantine counts by stable failure code.
+- Output files, bytes, and row counts.
+- Bounded safe samples without payloads or numeric market values.
+
+## Manifest
+
+Each append-only manifest should contain at least:
+
+```text
+curation_run_id
+snapshot_key
+curated_schema_version
+transform_version
+mode
+started_at
+completed_at
+status
+raw_integrity_report_uri
+raw_integrity_report_sha256
+input_topic
+partition_offset_bounds
+raw_rows_in_snapshot
+curated_logical_trades
+exact_duplicate_deliveries
+conflicting_duplicate_deliveries
+quarantined_input_rows
+quarantine_counts
+curated_output_uri
+quarantine_output_uri
+output_files
+output_bytes
+event_time_bounds
+kafka_time_bounds
+```
+
+Do not include prices, sizes, complete source payloads, Kafka values, or
+credentials.
+
+## Query validation
+
+Add a small DuckDB validation command or documented query that reads one
+manifest's curated output and proves:
+
+- The schema matches v1.
+- `event_id` is unique and non-null.
+- Price, size, and notional are positive decimals.
+- Symbols and sides are normalized.
+- Event dates match event timestamps.
+- The known backfilled fixture appears once despite later ingestion time.
+
+This is validation and exploration, not yet a dbt mart or production catalog.
 
 ## Exit codes
 
-- `0`: apply mode resolved every finding, or no publication was needed.
-- `2`: dry run validated at least one finding that remains ready to publish.
-- `3`: unresolved, ambiguous, partial, or retryable failure.
-- `4`: invalid/permanent input or contract failure.
-- Other nonzero codes: unexpected execution failure.
+- `0`: published successfully or the identical successful snapshot already
+  exists.
+- `2`: dry run completed and is ready for explicit publication.
+- `3`: conflicting duplicates or another unresolved quality result.
+- `4`: invalid audit evidence, schema, configuration, or permanent contract
+  failure.
+- Other nonzero values: unexpected infrastructure or execution failure.
 
 ## Acceptance criteria
 
-- Dry run is the default and performs no Kafka publication.
-- `--apply` is required before any trade is published.
-- Only a validated `gaps_found` reconciliation report and its linked findings
-  may drive publication.
-- A newly complete REST read must still contain every finding being repaired.
-- The archive is checked immediately before each publication.
-- An already archived finding is skipped without publishing.
-- Live and backfill paths use the same shared canonical event model and
-  deterministic event-ID function.
-- Existing collector events remain valid after producer provenance is extended.
-- Backfill events identify `apps.historical_backfill` as their producer.
-- Every Kafka send uses idempotence, the canonical key and headers, and requires
-  an acknowledgement.
-- Kafka acknowledgement receipts record only safe identity and log-position
-  metadata.
-- A finding resolves only after its acknowledged topic, partition, and offset
-  appears exactly once in raw Parquet.
-- Timeout waiting for Parquet remains `published_pending_archive` or unresolved;
-  it never becomes a false failure that triggers an immediate blind republish.
-- Re-running after successful archival publishes nothing new.
-- Partial publication never produces a fully resolved run.
-- An ambiguous crash window is reported explicitly.
-- All retry counts, timeouts, claim ages, REST windows, publication counts, and
-  finding sample sizes are bounded.
-- The command performs no writes except canonical Kafka publication and
-  append-only backfill state/report documents.
-- The local runbook documents dry run, apply, verification, safe retry, and
-  ambiguous-state investigation.
+- A checked-in schema documents curated market trades v1.
+- The shared Spark transform is independent of batch versus streaming input.
+- The batch job consumes an exact passing Kafka-position snapshot.
+- Dry run writes no curated or quarantine objects.
+- Apply writes immutable run-scoped output and publishes the manifest last.
+- Raw Kafka keys, values, headers, Parquet objects, and checkpoints are never
+  modified.
+- Coinbase price and size become fixed-precision positive decimals.
+- Payload identity and time must match the canonical envelope.
+- Exact duplicate event IDs create one curated logical trade.
+- Live and historical-backfill producers use the same logical deduplication rule.
+- Conflicting duplicates do not silently choose an economic value.
+- Invalid inputs are quarantined with safe bounded evidence.
+- Curated rows retain enough Kafka provenance to trace back to raw.
+- Curated partitions use market event date, not Kafka ingestion date.
+- Count reconciliation succeeds before a manifest is published.
+- The same snapshot can be rerun without another logical publication.
+- A later snapshot with higher exclusive Kafka offsets receives a distinct key.
+- DuckDB can query the published snapshot and validate its invariants.
+- Documentation explains dry run, apply, manifest selection, quarantine review,
+  deterministic rerun, and safe recovery from partial staging output.
 
 ## Required tests
 
 Add focused tests for at least:
 
-- A report not in `gaps_found` is rejected.
-- Report/findings run-ID, reconciliation-key, count, prefix, and digest
-  mismatches are rejected.
-- Duplicate finding identities are rejected.
-- A finding absent from a newly complete REST result becomes
-  `unresolved_source_changed` and is not published.
-- Dry run identifies ready work and creates no producer.
-- An already archived identity is skipped without publication.
-- One missing identity produces one canonical event with the deterministic
-  event ID, correct producer, key, headers, and causation metadata.
-- Existing live collector fixtures remain valid after contract evolution.
-- A Kafka acknowledgement records the exact topic, partition, and offset.
-- The acknowledged position appearing once in Parquet resolves the finding.
-- A verification timeout does not blindly republish.
-- Re-running a resolved finding publishes nothing.
-- A bounded retry uses the same deterministic event ID.
-- Two concurrent attempts cannot both acquire the same publish claim.
-- A simulated crash before acknowledgement produces an ambiguous state.
-- One successful and one failed finding creates `partially_resolved`.
-- BTC and ETH reconciliation runs remain independent.
-- All report samples are capped and contain no payload fields.
+- Valid collector and backfill fixtures produce the same curated schema.
+- Numeric strings become exact decimal values without float conversion.
+- Notional uses the documented scale and rounding policy.
+- Zero, negative, non-numeric, non-finite, and overflowing decimals quarantine.
+- Unsupported or missing side values quarantine.
+- Payload/envelope trade ID, product, and timestamp mismatches quarantine.
+- Kafka key and header mismatches quarantine.
+- Naive timestamps and unsupported producer values quarantine.
+- One valid input produces one curated row with correct provenance.
+- Two exact duplicates produce one deterministic representative.
+- Reversing input order produces byte-equivalent logical results.
+- A collector record and backfill record for the same source trade produce one
+  curated row.
+- Same event ID with different price, size, side, symbol, or event time becomes
+  a conflicting duplicate with no curated winner.
+- BTC and ETH remain independent.
+- Historical event time with a later Kafka timestamp lands in the historical
+  event-date partition.
+- Quarantine samples contain hashes and safe positions but no payload or market
+  values.
+- Count reconciliation equations hold for mixed valid, duplicate, conflicting,
+  and invalid input.
+- Invalid raw-integrity status, topic, bounds, prefix, or digest is rejected.
+- Dry run creates no output.
+- Apply publishes the manifest only after output validation.
+- A simulated failure before manifest creation leaves no published snapshot.
+- Rerunning an existing snapshot returns its original manifest.
+- A higher Kafka ending offset creates a different snapshot key.
+- Manifest samples and aggregation cardinality are bounded.
 
-Add an optional Compose integration test that:
+Add a Compose integration test that:
 
-1. Uses a stubbed Coinbase REST response and isolated reconciliation report.
-2. Produces one confirmed missing finding.
-3. Verifies dry run publishes nothing.
-4. Runs apply mode against local Kafka and the real raw sink.
-5. Captures the Kafka acknowledgement.
-6. Waits for the exact position in MinIO Parquet.
-7. Re-runs apply mode and proves no second record is published.
-8. Runs the Kafka-to-Parquet audit and verifies it still passes.
+1. Uses an isolated raw-integrity snapshot and unique event IDs.
+2. Includes one live-style record, its exact source redelivery, one
+   historical-backfill-style record, and one invalid fixture.
+3. Proves dry run writes nothing.
+4. Runs the real Spark batch curation job against MinIO raw Parquet.
+5. Verifies one logical row for each distinct valid event ID.
+6. Verifies the invalid row appears only in quarantine.
+7. Reads the output with DuckDB and checks decimals and provenance.
+8. Reruns apply and proves no second logical snapshot is published.
 
-The integration test must use uniquely identifiable records and must not delete
-or reset shared Kafka, MinIO, or checkpoint state.
+The test must use an isolated output prefix and must not delete or reset shared
+Kafka, raw Parquet, MinIO volumes, or Spark checkpoints.
 
 ## Operational validation
 
-Before apply mode:
+Before apply:
 
-1. Preserve the reconciliation report, findings, and raw-integrity report.
-2. Run a new dry run and inspect every ready, changed, and already-archived
-   identity.
-3. Confirm the configured Kafka topic, MinIO endpoint, and symbol.
-4. Preserve current raw-sink logs and verify the sink is healthy.
-5. Record the intended reconciliation and backfill run IDs.
+1. Preserve the passing raw-integrity report used as the snapshot boundary.
+2. Run dry mode and review counts, conflicts, quarantine reasons, and event-time
+   ranges.
+3. Confirm raw, curated, quarantine, and manifest prefixes are distinct.
+4. Record the snapshot key and expected curated row count.
 
-After apply mode:
+After apply:
 
-1. Preserve Kafka acknowledgement receipts.
-2. Verify each exact topic/partition/offset in raw Parquet.
-3. Re-run apply mode and confirm it publishes nothing.
-4. Run the Kafka-to-Parquet integrity audit and preserve its passing report.
-5. Keep ambiguous or partial findings open until evidence resolves them.
-
-Never delete checkpoints or raw Parquet to make verification pass.
+1. Preserve the manifest URI and digest.
+2. Read back every output file schema and reconcile counts.
+3. Query event-ID uniqueness and decimal constraints with DuckDB.
+4. Verify at least one known backfill event appears exactly once.
+5. Rerun the identical snapshot and confirm it returns the existing manifest.
+6. Keep any conflicting duplicate unresolved; do not manually delete one raw
+   delivery to make curation pass.
 
 ## Out of scope
 
-- Automatically scheduling or triggering repair from every quality event
-- Repairing an arbitrary operator-supplied trade ID
-- Direct writes to raw Parquet
-- Kafka or Parquet deletion and checkpoint reset
-- Coinbase intervals whose REST completeness cannot be established
-- Curated-layer deduplication
-- Multi-exchange repair
-- Reconstructing WebSocket envelopes, sequence numbers, or heartbeats
-- Trading decisions based on repaired data
-- Claiming exactly-once publication across an unrecorded crash window
+- One-minute or higher-interval candles
+- A continuous curated streaming service
+- Watermark and late-data policy for live windowed aggregation
+- Airflow scheduling
+- PostgreSQL incident registry
+- dbt facts, dimensions, marts, or generated documentation
+- Glue Catalog or Athena publication
+- Raw Parquet compaction or deletion
+- Curated incremental merge/upsert optimization
+- Automatic conflict resolution
+- Strategy signals, backtesting, order execution, or risk controls
+- Multi-exchange payload normalization beyond the explicit Coinbase v1 mapping
 
 ## Follow-up story
 
-After manual backfill is reliable, add durable incident resolution and bounded
-orchestration. Link reconciliation and backfill terminal states to the original
-data-quality incident, schedule only eligible unresolved incidents, enforce one
-active repair per reconciliation key, and alert on partial or ambiguous states.
+Build deterministic one-minute candles from curated trades with shared batch and
+streaming transformation logic. Define event-time windows, watermark and late
+backfill behavior, empty-window policy, decimal OHLC/VWAP calculations, revision
+semantics, and a replay test proving live and batch candles match for the same
+curated snapshot.
 
 ## Definition of done
 
-The story is complete when an operator can dry-run one confirmed reconciliation,
-explicitly apply its repairs through canonical Kafka, observe every acknowledged
-position exactly once in raw Parquet, safely rerun without another publication,
-and receive an honest durable state for every successful, skipped, partial,
-failed, or ambiguous finding without modifying existing pipeline data directly.
+The story is complete when a passing frozen raw snapshot can be curated
+repeatedly into the same manifest-backed dataset, every valid Coinbase trade is
+represented by one fixed-precision logical row regardless of source redelivery
+or live/backfill provenance, invalid or conflicting records are safely
+quarantined, and DuckDB can query the result without decoding raw Kafka JSON.

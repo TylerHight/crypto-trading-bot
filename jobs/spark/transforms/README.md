@@ -11,3 +11,10 @@ restricts Parquet to the retained Kafka range, validates archived event JSON,
 and returns bounded samples for an integrity report. Duplicate event IDs are a
 warning because the immutable raw layer intentionally preserves source
 redelivery; duplicate Kafka positions are an archive failure.
+
+`curated_market_trades.py` is the source-independent raw-to-curated transform.
+It performs strict envelope/payload/provenance validation, fixed-precision
+normalization, deterministic exact deduplication, and safe quarantine routing.
+Producer and ingestion metadata are deliberately not part of logical equality,
+allowing a live and reviewed backfill delivery of the same source trade to
+collapse to one fact while retaining the lowest Kafka-position provenance.

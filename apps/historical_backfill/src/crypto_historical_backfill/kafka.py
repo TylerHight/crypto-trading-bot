@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
 from confluent_kafka import KafkaError, KafkaException, Message, Producer
@@ -14,13 +15,19 @@ class KafkaReceipt:
     topic: str
     partition: int
     offset: int
+    acknowledged_at: datetime | None = None
 
     def as_dict(self) -> dict[str, str | int]:
-        return {
+        value: dict[str, str | int] = {
             "kafka_topic": self.topic,
             "kafka_partition": self.partition,
             "kafka_offset": self.offset,
         }
+        if self.acknowledged_at is not None:
+            value["kafka_acknowledged_at"] = (
+                self.acknowledged_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+            )
+        return value
 
 
 class RetryablePublicationError(RuntimeError):
@@ -140,7 +147,7 @@ class AcknowledgedKafkaPublisher:
         offset = message.offset()
         if topic is None or partition is None or offset is None:
             raise AmbiguousPublicationError("Kafka acknowledgement lacked a complete position")
-        return KafkaReceipt(topic, partition, offset)
+        return KafkaReceipt(topic, partition, offset, datetime.now(UTC))
 
     def close(self, timeout_seconds: float = 10.0) -> None:
         if self._producer.flush(timeout_seconds):

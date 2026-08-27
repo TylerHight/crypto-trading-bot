@@ -218,13 +218,23 @@ class FakeArchive:
         self.archived = archived
         self.positions = positions or {}
         self.position_queries: list[tuple[str, int, int]] = []
+        self.position_windows: list[tuple[datetime, datetime]] = []
 
     def scan(self, **_: Any) -> ArchiveScan:
         return ArchiveScan(self.archived, len(self.archived), 0, 0, ())
 
-    def count_position(self, *, topic: str, partition: int, offset: int, **_: Any) -> int:
+    def count_position(
+        self,
+        *,
+        topic: str,
+        partition: int,
+        offset: int,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> int:
         position = (topic, partition, offset)
         self.position_queries.append(position)
+        self.position_windows.append((start_at, end_at))
         return self.positions.get(position, 0)
 
 
@@ -302,7 +312,8 @@ def test_source_change_and_already_archived_do_not_publish(tmp_path: Path) -> No
 
 def test_apply_publishes_canonical_event_and_verifies_exact_position(tmp_path: Path) -> None:
     _, value = load(tmp_path / "input")
-    receipt = KafkaReceipt("market.trades.raw.v1", 2, 99)
+    acknowledged_at = datetime(2026, 8, 26, 16, 5, tzinfo=UTC)
+    receipt = KafkaReceipt("market.trades.raw.v1", 2, 99, acknowledged_at)
     archive = FakeArchive(positions={(receipt.topic, receipt.partition, receipt.offset): 1})
     publisher = FakePublisher([receipt])
 
@@ -320,9 +331,16 @@ def test_apply_publishes_canonical_event_and_verifies_exact_position(tmp_path: P
     assert event.source_sequence is None
     assert event.causation_id == RECONCILIATION_RUN_ID
     assert archive.position_queries == [(receipt.topic, receipt.partition, receipt.offset)]
+    assert archive.position_windows == [
+        (
+            acknowledged_at - timedelta(minutes=5),
+            acknowledged_at + timedelta(minutes=5),
+        )
+    ]
     receipt_files = list((tmp_path / "state" / "receipts").rglob("*.json"))
     stored = json.loads(receipt_files[0].read_text())
     assert stored["kafka_partition"] == 2 and stored["kafka_offset"] == 99
+    assert stored["kafka_acknowledged_at"] == "2026-08-26T16:05:00Z"
     assert "payload" not in stored and "price" not in json.dumps(result)
 
 
@@ -341,6 +359,8 @@ def test_verification_timeout_preserves_pending_state_and_claim_blocks_republish
 
     assert first["samples"]["published_pending_archive"][0]["kafka_offset"] == 7
     assert second["samples"]["published_pending_archive"][0]["kafka_offset"] == 7
+    assert second["publish_attempted"] == 0
+    assert second["kafka_acknowledged"] == 0
     assert len(publisher.events) == 1
 
 

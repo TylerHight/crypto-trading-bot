@@ -26,3 +26,50 @@ changing source data or Spark checkpoints.
 strict event-value validation. Run the local audit through
 `scripts/run_raw_integrity_audit.ps1`; the final `AUDIT_REPORT_JSON=` line is the
 machine-readable report.
+
+## Curated market trades v1
+
+`entrypoints/curate_market_trades.py` consumes a passing raw-integrity report,
+filters immutable raw Parquet to its exact topic/partition offset bounds, and
+calls the shared `transforms/curated_market_trades.py` transformation. The
+transformation strictly validates Coinbase envelopes, Kafka keys and headers,
+uses `decimal(38,18)`, selects exact duplicates by the lowest Kafka position,
+and sends invalid or conflicting rows to a safe quarantine projection.
+
+Dry run is the default and exits `2` after reporting counts without writing.
+Add `--apply` to write unique run-scoped Parquet. A successful publication is
+discoverable only through the append-only manifest at
+`curated/market_trades/v1/manifests/<snapshot-key>/manifest.json`; rerunning the
+same frozen snapshot returns that manifest without another write. Any conflict
+exits `3`, writes run-scoped evidence in apply mode, and publishes no manifest.
+Invalid evidence or configuration exits `4`.
+
+Example inside the Spark image:
+
+```powershell
+podman compose run --rm --no-deps -T raw-sink `
+  /opt/spark/bin/spark-submit --master 'local[2]' `
+  --conf spark.jars.ivy=/opt/spark/.ivy2 `
+  --packages org.apache.hadoop:hadoop-aws:3.3.4 `
+  /opt/spark/work-dir/jobs/spark/entrypoints/curate_market_trades.py `
+  --raw-integrity-report s3a://crypto-data/reconciliation/raw-integrity/audit.json
+```
+
+Review the terminal `CURATION_REPORT_JSON` line, then repeat with `--apply`.
+Credentials come from `CURATION_S3_*` environment variables and are never
+included in reports. Local evidence and filesystem outputs require the explicit
+`--local-development` option. Unreferenced run directories left by a failed
+apply are safe to retain for investigation; retry with the same frozen report,
+and do not overwrite or expose them manually.
+
+Download the published manifest and validate the snapshot with DuckDB:
+
+```powershell
+python -m jobs.spark.entrypoints.validate_curated_market_trades `
+  --manifest .\curated-manifest.json `
+  --known-event-id <known-backfill-event-id>
+```
+
+The validator checks the v1 schema, UUID/uniqueness, positive decimals,
+normalization, event-date partition semantics, and the optional known backfill
+fixture. It reads S3 credentials from the same environment variables.

@@ -325,10 +325,17 @@ class BackfillStateStore:
             offset = int(offset_value)
             if partition < 0 or offset < 0:
                 raise ValueError
+            acknowledged_value = payload.get("kafka_acknowledged_at")
+            acknowledged_at = (
+                _aware_utc(acknowledged_value, "kafka_acknowledged_at")
+                if acknowledged_value is not None
+                else None
+            )
             return KafkaReceipt(
                 topic=topic_value,
                 partition=partition,
                 offset=offset,
+                acknowledged_at=acknowledged_at,
             )
         except (KeyError, TypeError, ValueError) as error:
             raise InvalidBackfillInput("stored Kafka receipt is malformed") from error
@@ -389,6 +396,8 @@ class FindingResult:
     finding: ConfirmedFinding
     state: str
     receipt: KafkaReceipt | None = None
+    publication_attempted: bool = False
+    acknowledged_this_run: bool = False
 
     def safe_dict(self) -> dict[str, object]:
         value: dict[str, object] = {**self.finding.safe_dict(), "state": self.state}
@@ -482,17 +491,40 @@ class BackfillService:
                     receipt = publisher.publish(event)
                 except AmbiguousPublicationError:
                     results.append(
-                        self._record(value, finding, run_id, "unresolved_ambiguous_publication")
+                        self._record(
+                            value,
+                            finding,
+                            run_id,
+                            "unresolved_ambiguous_publication",
+                            publication_attempted=True,
+                        )
                     )
                     continue
                 except (RetryablePublicationError, BufferError):
-                    results.append(self._record(value, finding, run_id, "failed_retryable"))
+                    results.append(
+                        self._record(
+                            value,
+                            finding,
+                            run_id,
+                            "failed_retryable",
+                            publication_attempted=True,
+                        )
+                    )
                     continue
                 self.state.write_receipt(value, finding, run_id, receipt)
                 self.state.record_state(
                     value, finding, run_id, "published_pending_archive", receipt
                 )
-                results.append(self._verify(value, finding, run_id, receipt))
+                results.append(
+                    self._verify(
+                        value,
+                        finding,
+                        run_id,
+                        receipt,
+                        publication_attempted=True,
+                        acknowledged_this_run=True,
+                    )
+                )
         finally:
             if publisher is not None:
                 publisher.close()
@@ -506,25 +538,54 @@ class BackfillService:
         finding: ConfirmedFinding,
         run_id: UUID,
         receipt: KafkaReceipt,
+        *,
+        publication_attempted: bool = False,
+        acknowledged_this_run: bool = False,
     ) -> FindingResult:
         deadline = self.monotonic() + self.verification_timeout
+        if receipt.acknowledged_at is None:
+            partition_start = value.start_at
+            partition_end = value.end_at
+        else:
+            partition_start = receipt.acknowledged_at - timedelta(minutes=5)
+            partition_end = receipt.acknowledged_at + timedelta(minutes=5)
         while True:
             count = self.archive.count_position(
                 topic=receipt.topic,
                 partition=receipt.partition,
                 offset=receipt.offset,
-                start_at=value.start_at,
-                end_at=value.end_at,
+                start_at=partition_start,
+                end_at=partition_end,
             )
             if count == 1:
-                return self._record(value, finding, run_id, "resolved_backfilled", receipt)
+                return self._record(
+                    value,
+                    finding,
+                    run_id,
+                    "resolved_backfilled",
+                    receipt,
+                    publication_attempted=publication_attempted,
+                    acknowledged_this_run=acknowledged_this_run,
+                )
             if count > 1:
                 return self._record(
-                    value, finding, run_id, "unresolved_ambiguous_publication", receipt
+                    value,
+                    finding,
+                    run_id,
+                    "unresolved_ambiguous_publication",
+                    receipt,
+                    publication_attempted=publication_attempted,
+                    acknowledged_this_run=acknowledged_this_run,
                 )
             if self.monotonic() >= deadline:
                 return self._record(
-                    value, finding, run_id, "published_pending_archive", receipt
+                    value,
+                    finding,
+                    run_id,
+                    "published_pending_archive",
+                    receipt,
+                    publication_attempted=publication_attempted,
+                    acknowledged_this_run=acknowledged_this_run,
                 )
             self.sleep(min(self.verification_poll, max(0.0, deadline - self.monotonic())))
 
@@ -535,9 +596,18 @@ class BackfillService:
         run_id: UUID,
         state: str,
         receipt: KafkaReceipt | None = None,
+        *,
+        publication_attempted: bool = False,
+        acknowledged_this_run: bool = False,
     ) -> FindingResult:
         self.state.record_state(value, finding, run_id, state, receipt)
-        return FindingResult(finding, state, receipt)
+        return FindingResult(
+            finding,
+            state,
+            receipt,
+            publication_attempted,
+            acknowledged_this_run,
+        )
 
     @staticmethod
     def _event(value: BackfillInput, trade: ExchangeTrade) -> MarketTradeRawEvent:
@@ -564,11 +634,12 @@ class BackfillService:
     ) -> dict[str, object]:
         states = [result.state for result in results]
         resolved = {"skipped_already_archived", "resolved_backfilled"}
+        publish_attempted = sum(result.publication_attempted for result in results)
         if not apply and "dry_run_ready" in states and all(
             state in {"dry_run_ready", "skipped_already_archived"} for state in states
         ):
             status = "dry_run_ready"
-        elif all(state == "skipped_already_archived" for state in states):
+        elif all(state in resolved for state in states) and publish_attempted == 0:
             status = "resolved_no_action_needed"
         elif all(state in resolved for state in states):
             status = "resolved_backfilled"
@@ -592,11 +663,8 @@ class BackfillService:
             "status": status,
             "confirmed_findings": len(results),
             "already_archived": states.count("skipped_already_archived"),
-            "publish_attempted": states.count("resolved_backfilled")
-            + states.count("published_pending_archive")
-            + states.count("failed_retryable")
-            + states.count("unresolved_ambiguous_publication"),
-            "kafka_acknowledged": sum(result.receipt is not None for result in results),
+            "publish_attempted": publish_attempted,
+            "kafka_acknowledged": sum(result.acknowledged_this_run for result in results),
             "archive_verified": states.count("resolved_backfilled"),
             "ambiguous": states.count("unresolved_ambiguous_publication")
             + states.count("published_pending_archive"),

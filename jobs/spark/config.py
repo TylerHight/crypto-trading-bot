@@ -137,3 +137,42 @@ class RawAuditSettings:
                 20,
             ),
         )
+
+
+@dataclass(frozen=True)
+class CurationSettings:
+    """Object-storage and safety bounds for curated snapshot publication."""
+
+    s3_endpoint: str
+    s3_access_key: str
+    s3_secret_key: str
+    evidence_prefix: str
+    sample_limit: int
+    maximum_input_rows: int | None
+
+    @classmethod
+    def from_env(cls, values: Mapping[str, str] | None = None) -> "CurationSettings":
+        source = environ if values is None else values
+        maximum_text = source.get("CURATION_MAXIMUM_INPUT_ROWS", "").strip()
+        maximum = None
+        if maximum_text:
+            try:
+                maximum = int(maximum_text)
+            except ValueError as error:
+                raise ValueError("CURATION_MAXIMUM_INPUT_ROWS must be an integer") from error
+            if maximum <= 0:
+                raise ValueError("CURATION_MAXIMUM_INPUT_ROWS must be greater than zero")
+        return cls(
+            s3_endpoint=_required(
+                source, "CURATION_S3_ENDPOINT", "http://minio:9000"
+            ),
+            s3_access_key=_required(source, "CURATION_S3_ACCESS_KEY", "minioadmin"),
+            s3_secret_key=_required(source, "CURATION_S3_SECRET_KEY", "minioadmin"),
+            evidence_prefix=_required(
+                source,
+                "CURATION_EVIDENCE_PREFIX",
+                "s3a://crypto-data/reconciliation/raw-integrity",
+            ).rstrip("/"),
+            sample_limit=_positive_int(source, "CURATION_SAMPLE_LIMIT", 20),
+            maximum_input_rows=maximum,
+        )

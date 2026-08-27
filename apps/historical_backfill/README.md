@@ -82,7 +82,8 @@ backfill-coinbase-trades `
 
 Apply mode creates one conditional claim per finding, waits for every Kafka
 acknowledgement, durably records its topic/partition/offset, and resolves only
-after that exact position appears once in raw Parquet. A timeout remains
+after that exact position appears once in the bounded Kafka-ingestion-time raw
+Parquet partitions selected from the acknowledgement timestamp. A timeout remains
 `published_pending_archive`; retrying checks Parquet and the durable receipt and
 does not blindly publish. A claim without a receipt is
 `unresolved_ambiguous_publication` and requires investigation.

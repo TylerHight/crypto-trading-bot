@@ -1,6 +1,6 @@
 import pytest
 
-from jobs.spark.config import RawAuditSettings, RawSinkSettings
+from jobs.spark.config import CurationSettings, RawAuditSettings, RawSinkSettings
 
 
 def test_raw_sink_defaults_match_local_compose() -> None:
@@ -71,3 +71,17 @@ def test_raw_audit_normalizes_input_path() -> None:
 def test_raw_audit_requires_positive_sample_limit(value: str) -> None:
     with pytest.raises(ValueError, match="RAW_AUDIT_SAMPLE_LIMIT"):
         RawAuditSettings.from_env({"RAW_AUDIT_SAMPLE_LIMIT": value})
+
+
+def test_curation_defaults_are_bounded_and_use_the_evidence_prefix() -> None:
+    settings = CurationSettings.from_env({})
+
+    assert settings.evidence_prefix == "s3a://crypto-data/reconciliation/raw-integrity"
+    assert settings.sample_limit == 20
+    assert settings.maximum_input_rows is None
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_curation_requires_a_positive_maximum_when_configured(value: str) -> None:
+    with pytest.raises(ValueError, match="CURATION_MAXIMUM_INPUT_ROWS"):
+        CurationSettings.from_env({"CURATION_MAXIMUM_INPUT_ROWS": value})
