@@ -1,6 +1,11 @@
 import pytest
 
-from jobs.spark.config import CurationSettings, RawAuditSettings, RawSinkSettings
+from jobs.spark.config import (
+    CandleSettings,
+    CurationSettings,
+    RawAuditSettings,
+    RawSinkSettings,
+)
 
 
 def test_raw_sink_defaults_match_local_compose() -> None:
@@ -85,3 +90,19 @@ def test_curation_defaults_are_bounded_and_use_the_evidence_prefix() -> None:
 def test_curation_requires_a_positive_maximum_when_configured(value: str) -> None:
     with pytest.raises(ValueError, match="CURATION_MAXIMUM_INPUT_ROWS"):
         CurationSettings.from_env({"CURATION_MAXIMUM_INPUT_ROWS": value})
+
+
+def test_candle_defaults_use_curated_manifest_evidence() -> None:
+    settings = CandleSettings.from_env({})
+
+    assert settings.source_manifest_prefix.endswith(
+        "/curated/market_trades/v1/manifests"
+    )
+    assert settings.sample_limit == 20
+    assert settings.maximum_input_rows is None
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_candles_require_a_positive_maximum_when_configured(value: str) -> None:
+    with pytest.raises(ValueError, match="CANDLE_MAXIMUM_INPUT_ROWS"):
+        CandleSettings.from_env({"CANDLE_MAXIMUM_INPUT_ROWS": value})

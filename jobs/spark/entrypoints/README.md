@@ -15,3 +15,8 @@ accepts only a passing raw-integrity snapshot, defaults to a no-write dry run,
 and delegates all record validation and deduplication to the shared transform.
 The manifest is the sole publication boundary and is written after output
 schema, uniqueness, decimal, partition, and count checks pass.
+
+`build_market_candles.py` is the bounded curated-to-candle publisher. It pins a
+curated manifest by digest, reconciles every input trade to one non-empty UTC
+minute candle, and publishes only after schema, OHLCV/VWAP, key uniqueness,
+partition, known-backfill, and row-count checks pass.

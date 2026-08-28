@@ -176,3 +176,42 @@ class CurationSettings:
             sample_limit=_positive_int(source, "CURATION_SAMPLE_LIMIT", 20),
             maximum_input_rows=maximum,
         )
+
+
+@dataclass(frozen=True)
+class CandleSettings:
+    """Object-storage and reporting bounds for candle snapshot publication."""
+
+    s3_endpoint: str
+    s3_access_key: str
+    s3_secret_key: str
+    source_manifest_prefix: str
+    sample_limit: int
+    maximum_input_rows: int | None
+
+    @classmethod
+    def from_env(cls, values: Mapping[str, str] | None = None) -> "CandleSettings":
+        source = environ if values is None else values
+        maximum_text = source.get("CANDLE_MAXIMUM_INPUT_ROWS", "").strip()
+        maximum = None
+        if maximum_text:
+            try:
+                maximum = int(maximum_text)
+            except ValueError as error:
+                raise ValueError("CANDLE_MAXIMUM_INPUT_ROWS must be an integer") from error
+            if maximum <= 0:
+                raise ValueError("CANDLE_MAXIMUM_INPUT_ROWS must be greater than zero")
+        return cls(
+            s3_endpoint=_required(
+                source, "CANDLE_S3_ENDPOINT", "http://minio:9000"
+            ),
+            s3_access_key=_required(source, "CANDLE_S3_ACCESS_KEY", "minioadmin"),
+            s3_secret_key=_required(source, "CANDLE_S3_SECRET_KEY", "minioadmin"),
+            source_manifest_prefix=_required(
+                source,
+                "CANDLE_SOURCE_MANIFEST_PREFIX",
+                "s3a://crypto-data/curated/market_trades/v1/manifests",
+            ).rstrip("/"),
+            sample_limit=_positive_int(source, "CANDLE_SAMPLE_LIMIT", 20),
+            maximum_input_rows=maximum,
+        )

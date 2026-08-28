@@ -29,3 +29,18 @@ $env:RUN_RECONCILIATION_INTEGRATION_TESTS = "1"
   tests\integration\test_coinbase_trade_reconciliation.py
 Remove-Item Env:RUN_RECONCILIATION_INTEGRATION_TESTS
 ```
+
+The market-candle integration test creates a pinned curated-trade snapshot in
+local MinIO, runs the one-minute candle job in dry-run and apply modes, and
+checks deterministic OHLCV, half-open event-time windows, historical-backfill
+lineage, manifest publication, DuckDB validation, and idempotent reruns:
+
+```powershell
+podman compose up -d minio
+podman compose build raw-sink
+$env:RUN_INTEGRATION_TESTS = "1"
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests\integration\test_market_candles_pipeline.py
+Remove-Item Env:RUN_INTEGRATION_TESTS
+podman compose stop minio
+```

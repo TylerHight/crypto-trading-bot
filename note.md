@@ -1,296 +1,367 @@
-# User story: Build a curated, deduplicated market-trade dataset
+# User story: Build deterministic one-minute market candles
 
 ## Story
 
 As a market-data consumer,
-I want raw Kafka trade records parsed, normalized, validated, and deduplicated
-into a versioned curated Parquet dataset,
-so that analytics, candles, backtests, and future trading logic operate on one
-logical row per exchange trade instead of transport-level deliveries.
+I want published curated trades aggregated into deterministic one-minute candles,
+so that charts, research, backtests, and later strategy code can use a stable
+OHLCV/VWAP time series without regrouping individual trades.
 
 ## Why this is next
 
-The raw pipeline and its recovery path are now proven end to end:
+The pipeline now has a trustworthy query-facing trade layer:
 
 ```text
-Coinbase WebSocket / reviewed REST backfill
-    -> canonical Kafka event
-    -> immutable raw Parquet
-    -> exact Kafka-position audit
+Coinbase live collection / reviewed historical backfill
+    -> immutable raw Kafka archive
+    -> validated and deduplicated curated trades
+    -> append-only curated snapshot manifest
 ```
 
-The final local audit after backfill validation passed with:
+The next useful analytical primitive is a candle dataset. It exercises event-time
+aggregation, deterministic ordering, decimal arithmetic, and snapshot lineage
+without prematurely adding strategy execution, scheduling, or a continuously
+revising streaming service.
 
-```text
-Kafka records:             1,943,360
-Parquet records:           1,943,360
-Missing Kafka positions:   0
-Duplicate Kafka positions: 0
-Invalid event values:      0
-Duplicate logical IDs:     28,316 (warning)
-```
-
-That is the right raw-layer behavior: every accepted Kafka delivery is retained,
-including source redelivery. It is not yet the right interface for analysis.
-Consumers should not repeatedly decode JSON, interpret exchange strings, or
-independently decide how to handle duplicate deterministic event IDs.
-
-The project has spent enough time on additional incident-control machinery for
-now. A durable incident registry and Airflow automation are deferred until the
-pipeline produces queryable market data and a downstream consumer needs that
-operational sophistication.
+Build the bounded batch publication first. Put aggregation in a shared Spark
+DataFrame transform so a future streaming entry point can reuse the definitions.
 
 ## Outcome
 
-Produce an immutable curated snapshot with:
+Given one published curated market-trades v1 manifest, produce one immutable,
+manifest-backed candle snapshot containing at most one row per:
 
-- One validated logical row per deterministic `event_id`.
-- Fixed-precision price and size values.
-- Explicit source and provenance fields.
-- Deterministic handling of exact duplicates and conflicting duplicates.
-- Safe quarantine records for invalid input.
-- A manifest that identifies the exact raw Kafka-position snapshot used.
-- The same transformation logic available to later batch replay and streaming
-  entry points.
+```text
+(exchange, symbol, interval, window_start)
+```
 
-This story creates curated trades only. One-minute candles are the next story.
+The first supported interval is exactly one minute. Each row must contain
+deterministic OHLC prices, base and quote volume, VWAP, trade count, bounded
+lineage, and the source curated-snapshot identity.
 
 ## Architecture decisions
 
-### Raw remains immutable
+### Consume a manifest, not a mutable prefix
 
-Do not rewrite, compact, delete, or deduplicate the raw dataset. Curated output
-is a derived projection and may be regenerated from preserved raw Kafka records.
+The job must accept the URI of a published curated-trades manifest. It must:
 
-### Start with a bounded batch snapshot
+- Require `status` to be `published`.
+- Require curated schema version `v1`.
+- Verify the manifest digest and required fields.
+- Read only the manifest's `curated_output_uri`.
+- Revalidate the curated schema and row count before aggregation.
+- Reject a raw-data prefix, unpublished run directory, or current/latest pointer.
 
-Implement the shared Spark DataFrame transformation now, but materialize the
-first curated dataset with a bounded batch job rather than adding another
-continuous service immediately.
+The candle snapshot key must include the source curated snapshot key and digest,
+candle schema version, interval, and transform version.
 
-The batch job must consume a passing raw-integrity audit report that freezes the
-Kafka topic and exclusive ending offset for every partition. It then reads raw
-Parquet records only within those position bounds. This makes the snapshot
-repeatable even if the collector continues producing later records.
+### Use market event time
 
-Future streaming and replay entry points must call the same transformation
-module rather than reimplement parsing rules.
-
-### Partition curated data by market event time
-
-Raw Parquet is partitioned by Kafka ingestion time. Curated trades should be
-partitioned by the normalized trade `event_time`:
+Assign trades to half-open UTC windows:
 
 ```text
-event_date=YYYY-MM-DD/
+[window_start, window_end)
 ```
 
-Retain `kafka_timestamp` and `ingested_at` as separate columns for latency and
-late-arrival analysis. A historical backfill therefore lands in its historical
-curated event date while preserving the later Kafka ingestion timestamp.
-
-### Curated snapshots are append-only publications
-
-Write each completed snapshot beneath a unique run directory and publish an
-append-only manifest only after validation succeeds:
+For the one-minute interval:
 
 ```text
-curated/market_trades/v1/runs/<run-id>/event_date=YYYY-MM-DD/*.parquet
-curated/market_trades/v1/manifests/<snapshot-key>/<run-id>.json
+window_start = event_time truncated to the minute
+window_end   = window_start + 1 minute
 ```
 
-Do not expose a partial staging directory as a completed snapshot. Consumers use
-the manifest URI supplied by the job. A catalog/current-pointer mechanism can be
-added with the later analytics-platform story.
+A trade at exactly `14:01:00Z` belongs to the `14:01` candle, never the `14:00`
+candle. Kafka time and ingestion time must not determine the candle window.
 
-## Canonical curated schema
+### Define deterministic trade order
 
-Define and document a checked-in v1 schema containing at least:
+Opening and closing prices require a total ordering. Within a candle, order by:
 
 ```text
-event_id                 UUID/string, not null
-exchange                 normalized lowercase string, not null
-symbol                   normalized uppercase string, not null
-source_event_id          string, not null
-event_time               UTC timestamp, not null
-ingested_at              UTC timestamp, not null
-kafka_timestamp          UTC timestamp, not null
-price                    decimal(38, 18), not null
-size                     decimal(38, 18), not null
-notional                 decimal(38, 18), not null
-source_side              BUY or SELL, not null
-source_sequence          nonnegative integer or null
-producer                 known producer provenance, not null
-trace_id                 UUID/string, not null
-correlation_id           UUID/string or null
-causation_id             UUID/string or null
-kafka_topic              string, not null
-kafka_partition          nonnegative integer, not null
-kafka_offset             nonnegative integer, not null
-curated_schema_version   v1
-curated_at               UTC timestamp, not null
-event_date               date derived from event_time
+event_time ASC,
+kafka_topic ASC,
+kafka_partition ASC,
+kafka_offset ASC,
+event_id ASC
 ```
 
-Use decimal arithmetic throughout. Do not convert prices, sizes, or notionals to
-binary floating point.
+The first row supplies `open` and `first_event_id`. The last row supplies `close`
+and `last_event_id`. This rule must be independent of Spark partitioning, input
+file order, and replay order.
 
-Call the Coinbase field `source_side` until its exact maker/taker semantics are
-documented. Do not rename it to buyer side, seller side, aggressor side, or trade
-direction based on an assumption.
+Curated `event_id` is already unique, so the final tie-breaker is defensive and
+keeps the ordering definition total.
 
-Producer provenance is retained but is not part of logical trade identity.
+### Preserve fixed-precision arithmetic
 
-## Input contract validation
+Use decimal arithmetic throughout:
 
-For each raw Kafka row:
+- OHLC prices: `decimal(38,18)`.
+- Base volume: sum of curated `size`, represented as `decimal(38,18)`.
+- Quote volume: sum of curated `notional`, represented as `decimal(38,18)`.
+- VWAP: `quote_volume / base_volume`, rounded to scale 18 with round-half-even.
 
-1. Require non-null topic, partition, offset, Kafka timestamp, key, value, and
-   required event headers.
-2. Decode `kafka_value` as strict UTF-8 JSON.
-3. Validate the complete `market.trade.raw.v1` envelope.
-4. Require the configured canonical topic and supported producer.
-5. Require aware timestamps and normalize them to UTC.
-6. Require the Kafka key to equal `<exchange-lowercase>:<SYMBOL-UPPERCASE>`.
-7. Require headers to match the event type and schema version in the value.
-8. Validate the Coinbase payload fields used by the curated schema:
-   - `trade_id`
-   - `product_id`
-   - `price`
-   - `size`
-   - `side`
-   - `time`
-9. Require payload identity and event time to match the canonical envelope.
-10. Parse price and size as positive fixed-precision decimals within the schema
-    bounds.
-11. Normalize side to the documented `BUY`/`SELL` enum without guessing missing
-    values.
-12. Recompute `notional = price * size` using explicit decimal scale and rounding
-    policy.
+Do not convert prices, sizes, notionals, volumes, or VWAP to binary floating
+point. Detect accumulator or output overflow and fail publication rather than
+silently returning null, infinity, or a truncated number.
 
-Do not silently coerce malformed, missing, negative, zero, overflowing, or
-non-finite numeric values.
+### Omit empty windows
 
-## Quarantine behavior
+Do not synthesize candles for minutes with no trades. This story publishes
+trade-derived candles, not a forward-filled price series.
 
-Invalid inputs must not enter curated trades. Write a separate immutable
-quarantine dataset with only safe diagnostic fields:
+Consumers that require a dense calendar may join against a calendar table in a
+later analytics story. The absence of a row means no validated trade occurred
+for that market and minute in the source snapshot.
+
+### Publish immutable snapshot versions
+
+Write successful runs beneath a unique run directory:
 
 ```text
-curation_run_id
-kafka_topic
-kafka_partition
-kafka_offset
-kafka_timestamp
-failure_code
-failure_field
-event_id_when_safe
-value_sha256
-quarantined_at
+analytics/market_candles/v1/runs/<run-id>/
+  interval=1m/
+  event_date=YYYY-MM-DD/
+  event_hour=HH/
+  *.parquet
+
+analytics/market_candles/v1/manifests/<snapshot-key>/manifest.json
 ```
 
-Do not store a second complete Kafka value, raw Coinbase payload, malformed
-message excerpt, authorization data, or credentials in quarantine.
+Publish the append-only manifest only after all output validation succeeds.
+Consumers discover a candle snapshot through its manifest, not by listing run
+directories.
 
-Use stable failure codes such as:
+An identical source snapshot and transform configuration must return the existing
+manifest without writing another logical snapshot.
+
+## Canonical candle schema v1
+
+Define and document a checked-in schema containing at least:
 
 ```text
-invalid_utf8
-invalid_json
-invalid_envelope_contract
-invalid_kafka_key
-invalid_headers
-unsupported_exchange
-payload_identity_mismatch
-payload_time_mismatch
-invalid_price
-invalid_size
-invalid_side
-decimal_overflow
-conflicting_duplicate
+exchange                       lowercase string, not null
+symbol                         uppercase string, not null
+interval                       constant "1m", not null
+window_start                   UTC timestamp, not null
+window_end                     UTC timestamp, not null
+open                           decimal(38,18), not null
+high                           decimal(38,18), not null
+low                            decimal(38,18), not null
+close                          decimal(38,18), not null
+base_volume                    decimal(38,18), not null
+quote_volume                   decimal(38,18), not null
+vwap                           decimal(38,18), not null
+trade_count                    positive integer, not null
+first_event_id                 UUID/string, not null
+last_event_id                  UUID/string, not null
+minimum_kafka_timestamp        UTC timestamp, not null
+maximum_kafka_timestamp        UTC timestamp, not null
+minimum_ingested_at            UTC timestamp, not null
+maximum_ingested_at            UTC timestamp, not null
+source_curated_snapshot_key    string, not null
+candle_schema_version          constant "v1", not null
+candle_transform_version       string, not null
+created_at                     UTC timestamp, not null
+event_date                     date derived from window_start
+event_hour                     two-digit hour derived from window_start
 ```
 
-Every invalid input increments exactly one primary quarantine reason. Reports may
-include bounded secondary diagnostics but must not inflate rejected-row counts.
+Do not include complete trade payloads, arrays of every event ID, credentials, or
+unbounded provenance collections in a candle row.
 
-## Deterministic deduplication
+## Candle calculations
 
-Deduplicate by canonical `event_id`, not by price/time proximity or Kafka
-position.
+For each `(exchange, symbol, one-minute window)`:
 
-### Exact logical duplicates
+```text
+open         = price of the first deterministically ordered trade
+high         = maximum price
+low          = minimum price
+close        = price of the last deterministically ordered trade
+base_volume  = sum(size)
+quote_volume = sum(notional)
+vwap         = quote_volume / base_volume
+trade_count  = count(*)
+```
 
-When all immutable curated trade fields match for one event ID:
+Required invariants:
 
-- Emit one curated row.
-- Select the representative row deterministically by the lowest ordered
-  `(kafka_topic, kafka_partition, kafka_offset)`.
-- Record total deliveries and duplicate deliveries in the run report.
-- Preserve the selected Kafka provenance on the curated row.
+```text
+low <= open <= high
+low <= close <= high
+base_volume > 0
+quote_volume > 0
+vwap > 0
+trade_count > 0
+window_end = window_start + 1 minute
+event_date = UTC date(window_start)
+event_hour = UTC hour(window_start)
+```
 
-This covers Coinbase redelivery and a live/backfill record that represents the
-same source trade without creating a second logical fact.
+Do not calculate VWAP as the unweighted average of trade prices.
 
-### Conflicting duplicates
+## Late trades and historical backfills
 
-When one event ID maps to different immutable values such as symbol, source trade
-ID, event time, price, size, or source side:
+This bounded batch story does not mutate a previously published candle snapshot.
 
-- Emit no curated row for that event ID.
-- Quarantine the group as `conflicting_duplicate`.
-- Include only safe identity, Kafka positions, differing field names, and hashes
-  in bounded evidence.
-- Make the run status unresolved or failed according to an explicit threshold.
+If a later curated snapshot contains additional reviewed historical trades, it
+produces a different candle snapshot key and a new immutable publication. A
+candle for the same minute may therefore differ between snapshot versions. The
+manifest lineage makes that revision explicit.
 
-Never choose a winner from conflicting economic facts based only on latest
-arrival or producer name.
+Downstream consumers must select one candle manifest and stay on that version for
+a reproducible query or backtest. A current-pointer policy and streaming
+watermark/revision protocol are deferred until a consumer needs them.
+
+## Shared transformation boundary
+
+Add a reusable Spark function similar to:
+
+```python
+def aggregate_market_candles(
+    curated_trades: DataFrame,
+    *,
+    interval: str,
+    source_snapshot_key: str,
+    transform_version: str,
+    created_at: datetime,
+) -> DataFrame:
+    ...
+```
+
+The transform must:
+
+- Receive a DataFrame and explicit deterministic metadata.
+- Create no Spark session.
+- Open no storage, network, or manifest connection.
+- Contain no batch-versus-streaming source branch.
+- Avoid actions such as `collect()` on the complete input.
+- Return the canonical candle projection.
+
+The bounded entry point owns argument parsing, manifest loading, source and sink
+configuration, publication, and validation.
 
 ## Proposed entry point
 
-Add a bounded Spark entry point such as:
-
 ```powershell
-python -m jobs.spark.entrypoints.curate_market_trades `
-  --raw-integrity-report <passing-audit-report> `
-  --raw-input s3a://crypto-data/raw/market_trade_raw/v1 `
-  --output s3a://crypto-data/curated/market_trades/v1 `
-  --quarantine-output s3a://crypto-data/quarantine/market_trades/v1
+python -m jobs.spark.entrypoints.build_market_candles `
+  --curated-manifest <published-curated-manifest> `
+  --output s3a://crypto-data/analytics/market_candles/v1
 ```
 
-Dry run is the default. It validates the audit snapshot, computes counts and
-samples, and writes no curated or quarantine data.
+Dry run is the default. It validates the source snapshot, calculates candles and
+reports, and writes nothing.
 
 Publication requires:
 
 ```powershell
-python -m jobs.spark.entrypoints.curate_market_trades ... --apply
+python -m jobs.spark.entrypoints.build_market_candles ... --apply
 ```
 
-Environment variables or bounded options should provide S3/MinIO settings,
-timeouts, maximum input rows when configured for local tests, sample limits,
-decimal precision, and output prefixes. Credentials must not appear in command
-examples or reports.
+Only `--interval 1m` is accepted in v1. Unsupported intervals must fail clearly
+rather than being interpreted approximately.
 
-## Snapshot input validation
+## Dry-run report
 
-Before Spark writes output:
+The bounded report must include:
 
-- The raw-integrity report status is exactly `passed`.
-- Its topic is exactly `market.trades.raw.v1`.
-- Every partition has valid earliest and exclusive ending offsets.
-- Missing and duplicate Kafka-position counts are zero.
-- The report is beneath a configured evidence prefix, or a local file is allowed
-  only in explicit local-development mode.
-- The report digest is captured in the curation manifest.
-- The raw input and output prefixes are distinct.
-- Curated and quarantine prefixes are distinct.
-- The snapshot key derived from topic, partition bounds, transform version, and
-  schema version is deterministic.
+- Run ID, mode, status, and timestamps.
+- Source manifest URI and SHA-256 digest.
+- Source curated snapshot key and trade count.
+- Candle snapshot key and transform versions.
+- Interval and output prefix.
+- Total candle count and trade-count reconciliation.
+- Candle counts by exchange, symbol, event date, and event hour.
+- Minimum and maximum window timestamps.
+- Minimum, maximum, and percentile trade counts per candle.
+- Bounded samples containing identifiers and counts, but no market prices,
+  volumes, complete trades, or credentials.
 
-A rerun of the same successful snapshot key must return the existing manifest
-without writing another logical snapshot.
+Dry run exits `2` when ready for publication and writes no run directory,
+manifest, checkpoint, or quarantine object.
 
-## Run states
+## Count reconciliation
+
+Before publication, prove:
+
+```text
+source_curated_trades = sum(candle.trade_count)
+```
+
+Also prove:
+
+- Every source trade maps to exactly one supported candle key.
+- Every candle key is unique.
+- Every candle has at least one source trade.
+- The source manifest's curated count equals the rows actually read.
+
+A reconciliation failure is permanent for that attempted publication and must
+prevent manifest creation.
+
+## Manifest
+
+The append-only candle manifest must contain at least:
+
+```text
+candle_run_id
+snapshot_key
+candle_schema_version
+candle_transform_version
+interval
+mode
+started_at
+completed_at
+status
+source_curated_manifest_uri
+source_curated_manifest_sha256
+source_curated_snapshot_key
+source_curated_schema_version
+source_curated_trades
+candle_count
+trade_count_sum
+partition_columns
+candle_output_uri
+output_files
+output_bytes
+window_time_bounds
+```
+
+Do not include OHLC values, VWAP, volumes, complete event lists, raw messages, or
+credentials in the manifest.
+
+## Output validation
+
+Before publishing the manifest:
+
+1. Read back every produced Parquet file.
+2. Verify the checked-in candle v1 schema.
+3. Prove candle-key uniqueness.
+4. Prove all numeric and window invariants.
+5. Reconcile `sum(trade_count)` with source curated rows.
+6. Verify event-date and event-hour partition values.
+7. Verify output file and byte metrics.
+8. Verify at least one known historical-backfill minute is represented.
+
+A failed validation leaves only an unreferenced run directory. Recovery creates
+a new run ID from the same source manifest; it must not overwrite or manually
+promote the failed output.
+
+## DuckDB validation
+
+Add a validation command or documented query that accepts one candle manifest
+and proves:
+
+- The output schema matches v1.
+- Candle keys are unique and non-null.
+- OHLC relationships are valid.
+- Volumes, VWAP, and trade counts are positive.
+- Windows are exactly one minute.
+- Partition dates and hours match window starts.
+- `sum(trade_count)` matches the source curated count in the manifest.
+- A known backfilled fixture contributes to the expected historical minute.
+
+## Run states and exit codes
 
 Use explicit states:
 
@@ -298,227 +369,106 @@ Use explicit states:
 dry_run_ready
 published
 resolved_existing_snapshot
-unresolved_conflicting_duplicates
+failed_source_manifest
 failed_input_contract
+failed_reconciliation
 failed_retryable
 failed_permanent
 ```
 
-No run is `published` until:
+Exit codes:
 
-1. Curated and quarantine writes complete.
-2. Output schemas are read back and validated.
-3. Curated `event_id` uniqueness is proven.
-4. Counts reconcile to the frozen raw input.
-5. The append-only manifest is durably created.
-
-## Count reconciliation
-
-The terminal report and manifest must prove:
-
-```text
-raw_rows_in_snapshot
-  = valid_deliveries
-  + quarantined_input_rows
-
-valid_deliveries
-  = curated_logical_trades
-  + exact_duplicate_deliveries
-  + conflicting_duplicate_deliveries
-```
-
-Define the conflicting-group counting policy precisely so the equations remain
-unambiguous and tested.
-
-Also report:
-
-- Input topic and partition offset bounds.
-- Unique event IDs examined.
-- Curated rows by exchange, symbol, source producer, and event date.
-- Minimum and maximum event, ingestion, and Kafka timestamps.
-- Late-arrival latency percentiles using bounded aggregations.
-- Quarantine counts by stable failure code.
-- Output files, bytes, and row counts.
-- Bounded safe samples without payloads or numeric market values.
-
-## Manifest
-
-Each append-only manifest should contain at least:
-
-```text
-curation_run_id
-snapshot_key
-curated_schema_version
-transform_version
-mode
-started_at
-completed_at
-status
-raw_integrity_report_uri
-raw_integrity_report_sha256
-input_topic
-partition_offset_bounds
-raw_rows_in_snapshot
-curated_logical_trades
-exact_duplicate_deliveries
-conflicting_duplicate_deliveries
-quarantined_input_rows
-quarantine_counts
-curated_output_uri
-quarantine_output_uri
-output_files
-output_bytes
-event_time_bounds
-kafka_time_bounds
-```
-
-Do not include prices, sizes, complete source payloads, Kafka values, or
-credentials.
-
-## Query validation
-
-Add a small DuckDB validation command or documented query that reads one
-manifest's curated output and proves:
-
-- The schema matches v1.
-- `event_id` is unique and non-null.
-- Price, size, and notional are positive decimals.
-- Symbols and sides are normalized.
-- Event dates match event timestamps.
-- The known backfilled fixture appears once despite later ingestion time.
-
-This is validation and exploration, not yet a dbt mart or production catalog.
-
-## Exit codes
-
-- `0`: published successfully or the identical successful snapshot already
-  exists.
+- `0`: published or identical successful snapshot already exists.
 - `2`: dry run completed and is ready for explicit publication.
-- `3`: conflicting duplicates or another unresolved quality result.
-- `4`: invalid audit evidence, schema, configuration, or permanent contract
+- `4`: invalid source evidence, schema, configuration, or permanent validation
   failure.
 - Other nonzero values: unexpected infrastructure or execution failure.
-
-## Acceptance criteria
-
-- A checked-in schema documents curated market trades v1.
-- The shared Spark transform is independent of batch versus streaming input.
-- The batch job consumes an exact passing Kafka-position snapshot.
-- Dry run writes no curated or quarantine objects.
-- Apply writes immutable run-scoped output and publishes the manifest last.
-- Raw Kafka keys, values, headers, Parquet objects, and checkpoints are never
-  modified.
-- Coinbase price and size become fixed-precision positive decimals.
-- Payload identity and time must match the canonical envelope.
-- Exact duplicate event IDs create one curated logical trade.
-- Live and historical-backfill producers use the same logical deduplication rule.
-- Conflicting duplicates do not silently choose an economic value.
-- Invalid inputs are quarantined with safe bounded evidence.
-- Curated rows retain enough Kafka provenance to trace back to raw.
-- Curated partitions use market event date, not Kafka ingestion date.
-- Count reconciliation succeeds before a manifest is published.
-- The same snapshot can be rerun without another logical publication.
-- A later snapshot with higher exclusive Kafka offsets receives a distinct key.
-- DuckDB can query the published snapshot and validate its invariants.
-- Documentation explains dry run, apply, manifest selection, quarantine review,
-  deterministic rerun, and safe recovery from partial staging output.
 
 ## Required tests
 
 Add focused tests for at least:
 
-- Valid collector and backfill fixtures produce the same curated schema.
-- Numeric strings become exact decimal values without float conversion.
-- Notional uses the documented scale and rounding policy.
-- Zero, negative, non-numeric, non-finite, and overflowing decimals quarantine.
-- Unsupported or missing side values quarantine.
-- Payload/envelope trade ID, product, and timestamp mismatches quarantine.
-- Kafka key and header mismatches quarantine.
-- Naive timestamps and unsupported producer values quarantine.
-- One valid input produces one curated row with correct provenance.
-- Two exact duplicates produce one deterministic representative.
-- Reversing input order produces byte-equivalent logical results.
-- A collector record and backfill record for the same source trade produce one
-  curated row.
-- Same event ID with different price, size, side, symbol, or event time becomes
-  a conflicting duplicate with no curated winner.
-- BTC and ETH remain independent.
-- Historical event time with a later Kafka timestamp lands in the historical
-  event-date partition.
-- Quarantine samples contain hashes and safe positions but no payload or market
-  values.
-- Count reconciliation equations hold for mixed valid, duplicate, conflicting,
-  and invalid input.
-- Invalid raw-integrity status, topic, bounds, prefix, or digest is rejected.
-- Dry run creates no output.
-- Apply publishes the manifest only after output validation.
-- A simulated failure before manifest creation leaves no published snapshot.
-- Rerunning an existing snapshot returns its original manifest.
-- A higher Kafka ending offset creates a different snapshot key.
-- Manifest samples and aggregation cardinality are bounded.
+- A single trade produces one candle with identical OHLC and VWAP equal to price.
+- Multiple trades calculate exact OHLC, volumes, VWAP, and count.
+- Opening and closing prices use the documented total order.
+- Reversing input and repartitioning produce equivalent candles.
+- Trades at `HH:MM:00` and immediately before the next boundary land correctly.
+- BTC and ETH produce independent candles.
+- Different exchanges remain independent.
+- Empty minutes produce no rows.
+- Event time, not Kafka or ingestion time, selects the minute.
+- A historical trade ingested later lands in its historical minute.
+- Decimal calculations never use floats.
+- VWAP uses quote volume divided by base volume with round-half-even.
+- Decimal sum or division overflow prevents publication.
+- OHLC and volume invariants are checked.
+- Source trade count equals summed candle trade count.
+- Candle keys are unique.
+- Invalid, unpublished, malformed, or wrong-version curated manifests fail.
+- Manifest digest mismatch fails.
+- Dry run writes nothing and exits `2`.
+- Apply publishes the manifest only after read-back validation.
+- Failure before manifest creation leaves no published snapshot.
+- Identical input returns the original manifest.
+- A newer curated snapshot produces a different candle snapshot key.
+- Reports and samples are bounded and contain no market values.
 
 Add a Compose integration test that:
 
-1. Uses an isolated raw-integrity snapshot and unique event IDs.
-2. Includes one live-style record, its exact source redelivery, one
-   historical-backfill-style record, and one invalid fixture.
-3. Proves dry run writes nothing.
-4. Runs the real Spark batch curation job against MinIO raw Parquet.
-5. Verifies one logical row for each distinct valid event ID.
-6. Verifies the invalid row appears only in quarantine.
-7. Reads the output with DuckDB and checks decimals and provenance.
-8. Reruns apply and proves no second logical snapshot is published.
+1. Uses an isolated curated snapshot with deterministic BTC and ETH fixtures
+   spanning at least two minute boundaries.
+2. Includes two trades sharing an event timestamp but different Kafka positions.
+3. Includes a historical event with a later Kafka timestamp.
+4. Proves dry run writes nothing.
+5. Runs the real Spark candle job against MinIO.
+6. Reads output with DuckDB and verifies exact OHLCV/VWAP values.
+7. Verifies `sum(trade_count)` equals curated input rows.
+8. Verifies historical event-date and event-hour partitions.
+9. Reruns apply and proves no second logical snapshot is published.
 
-The test must use an isolated output prefix and must not delete or reset shared
-Kafka, raw Parquet, MinIO volumes, or Spark checkpoints.
+The test must use isolated prefixes and must not delete or reset shared raw data,
+curated data, Kafka topics, MinIO volumes, or Spark checkpoints.
 
-## Operational validation
+## Documentation
 
-Before apply:
+Document:
 
-1. Preserve the passing raw-integrity report used as the snapshot boundary.
-2. Run dry mode and review counts, conflicts, quarantine reasons, and event-time
-   ranges.
-3. Confirm raw, curated, quarantine, and manifest prefixes are distinct.
-4. Record the snapshot key and expected curated row count.
-
-After apply:
-
-1. Preserve the manifest URI and digest.
-2. Read back every output file schema and reconcile counts.
-3. Query event-ID uniqueness and decimal constraints with DuckDB.
-4. Verify at least one known backfill event appears exactly once.
-5. Rerun the identical snapshot and confirm it returns the existing manifest.
-6. Keep any conflicting duplicate unresolved; do not manually delete one raw
-   delivery to make curation pass.
+- How to choose and preserve a curated source manifest.
+- Dry-run and apply commands.
+- Candle formulas and deterministic ordering.
+- Decimal scale and rounding.
+- Empty-window behavior.
+- Late-backfill snapshot versioning.
+- Manifest selection for reproducible backtests.
+- DuckDB validation.
+- Safe recovery from unreferenced partial output.
 
 ## Out of scope
 
-- One-minute or higher-interval candles
-- A continuous curated streaming service
-- Watermark and late-data policy for live windowed aggregation
+- Continuous candle streaming service
+- Streaming watermarks and mutable late-data updates
+- A current/latest snapshot pointer
+- Dense calendar generation or forward-filled candles
+- Intervals other than one minute
+- Cross-exchange composite prices
+- Order-book candles or bid/ask spreads
+- dbt marts and semantic metrics
 - Airflow scheduling
-- PostgreSQL incident registry
-- dbt facts, dimensions, marts, or generated documentation
-- Glue Catalog or Athena publication
-- Raw Parquet compaction or deletion
-- Curated incremental merge/upsert optimization
-- Automatic conflict resolution
-- Strategy signals, backtesting, order execution, or risk controls
-- Multi-exchange payload normalization beyond the explicit Coinbase v1 mapping
+- Strategy signals, backtesting engines, execution, or risk controls
 
 ## Follow-up story
 
-Build deterministic one-minute candles from curated trades with shared batch and
-streaming transformation logic. Define event-time windows, watermark and late
-backfill behavior, empty-window policy, decimal OHLC/VWAP calculations, revision
-semantics, and a replay test proving live and batch candles match for the same
-curated snapshot.
+Build a versioned research/backtesting interface over curated trades and
+one-minute candle manifests. It should pin all inputs by manifest digest, define
+train/test time ranges, prevent look-ahead, record strategy parameters and code
+versions, and produce reproducible performance and data-lineage reports without
+placing orders.
 
 ## Definition of done
 
-The story is complete when a passing frozen raw snapshot can be curated
-repeatedly into the same manifest-backed dataset, every valid Coinbase trade is
-represented by one fixed-precision logical row regardless of source redelivery
-or live/backfill provenance, invalid or conflicting records are safely
-quarantined, and DuckDB can query the result without decoding raw Kafka JSON.
+The story is complete when any published curated-trade snapshot can be converted
+repeatedly into the same manifest-backed one-minute candle dataset; OHLCV/VWAP
+results are exact, event-time-based, deterministically ordered, and reconciled to
+every source trade; late backfills create an explicit new snapshot rather than
+silently mutating history; and DuckDB can validate and query the published candle
+snapshot directly.

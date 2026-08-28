@@ -73,3 +73,45 @@ python -m jobs.spark.entrypoints.validate_curated_market_trades `
 The validator checks the v1 schema, UUID/uniqueness, positive decimals,
 normalization, event-date partition semantics, and the optional known backfill
 fixture. It reads S3 credentials from the same environment variables.
+
+## One-minute market candles v1
+
+`entrypoints/build_market_candles.py` consumes exactly one published curated
+manifest and requires its expected SHA-256 digest. It revalidates the curated v1
+schema and row count, then calls `transforms/market_candles.py`. Dry run is the
+default and exits `2` without writing. Apply publishes a unique run directory and
+writes the append-only manifest last:
+
+```powershell
+podman compose run --rm --no-deps -T raw-sink `
+  /opt/spark/bin/spark-submit --master 'local[2]' `
+  --conf spark.jars.ivy=/opt/spark/.ivy2 `
+  --packages org.apache.hadoop:hadoop-aws:3.3.4 `
+  /opt/spark/work-dir/jobs/spark/entrypoints/build_market_candles.py `
+  --curated-manifest <curated-manifest-uri> `
+  --curated-manifest-sha256 <preserved-sha256>
+```
+
+Review `CANDLE_REPORT_JSON`, then repeat with `--apply`. The only supported
+interval is `1m`. Candles use half-open UTC event-time windows; open and close
+use `(event_time, kafka_topic, kafka_partition, kafka_offset, event_id)` order.
+Empty minutes are omitted. OHLC, volumes, and VWAP remain `decimal(38,18)` and
+VWAP uses round-half-even.
+
+Later curated snapshots—including reviewed historical backfills—produce new
+candle snapshot keys. Select and retain one candle manifest for every
+reproducible query or backtest; no job mutates an older publication. A failed
+apply may leave an unreferenced run directory, which must not be manually
+promoted or overwritten.
+
+Validate a downloaded candle manifest with DuckDB:
+
+```powershell
+python -m jobs.spark.entrypoints.validate_market_candles `
+  --manifest .\candle-manifest.json `
+  --known-backfill-symbol BTC-USD `
+  --known-backfill-window-start 2026-08-25T14:01:00Z
+```
+
+S3 configuration comes from `CANDLE_S3_*`; reports and examples never contain
+credentials.

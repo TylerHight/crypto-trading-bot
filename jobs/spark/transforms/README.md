@@ -18,3 +18,8 @@ normalization, deterministic exact deduplication, and safe quarantine routing.
 Producer and ingestion metadata are deliberately not part of logical equality,
 allowing a live and reviewed backfill delivery of the same source trade to
 collapse to one fact while retaining the lowest Kafka-position provenance.
+
+`market_candles.py` contains the source-independent one-minute aggregation.
+Opening and closing trades use a total event/Kafka order, empty windows are
+absent, volumes are decimal sums, and VWAP is calculated by an exact decimal
+half-even function. The transform creates no session and opens no storage.
