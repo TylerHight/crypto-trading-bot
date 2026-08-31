@@ -44,3 +44,18 @@ $env:RUN_INTEGRATION_TESTS = "1"
 Remove-Item Env:RUN_INTEGRATION_TESTS
 podman compose stop minio
 ```
+
+The candle-backtest integration test publishes a seven-candle fixture to local
+MinIO and runs the actual trading-core CLI. It checks exact next-open fills,
+costs and summary counts, direct S3 result validation, idempotent reruns, changed
+parameter identity, and fail-closed artifact tamper detection. Only MinIO is
+started; the test has no Kafka, execution-gateway, or exchange dependency:
+
+```powershell
+podman compose up -d minio
+$env:RUN_BACKTEST_INTEGRATION_TESTS = "1"
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests\integration\test_candle_backtest_pipeline.py
+Remove-Item Env:RUN_BACKTEST_INTEGRATION_TESTS
+podman compose stop minio
+```

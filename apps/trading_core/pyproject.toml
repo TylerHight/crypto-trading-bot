@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crypto-trading-core"
+version = "0.1.0"
+description = "Deterministic strategy, portfolio, and backtesting application"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.40,<2",
+    "crypto-trading-domain",
+    "duckdb>=1.4,<2",
+    "pyarrow>=21,<24",
+    "tzdata>=2025",
+]
+
+[project.scripts]
+backtest-market-candles = "crypto_trading_core.backtest:main"
+validate-backtest = "crypto_trading_core.validate_backtest:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/crypto_trading_core"]
+
+[tool.uv.sources]
+crypto-trading-domain = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

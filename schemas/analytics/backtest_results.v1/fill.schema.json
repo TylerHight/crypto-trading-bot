@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/backtest-fill-v1.json",
+  "title": "Simulated backtest fill v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fill_time", "decision_time", "side", "base_quantity", "reference_open_price", "execution_price", "gross_notional", "fee", "cash_after", "base_after"],
+  "properties": {
+    "fill_time": {"type": "string", "format": "date-time"},
+    "decision_time": {"type": "string", "format": "date-time"},
+    "side": {"enum": ["BUY", "SELL"]},
+    "base_quantity": {"$ref": "#/$defs/nonnegative_decimal"},
+    "reference_open_price": {"$ref": "#/$defs/nonnegative_decimal"},
+    "execution_price": {"$ref": "#/$defs/nonnegative_decimal"},
+    "gross_notional": {"$ref": "#/$defs/nonnegative_decimal"},
+    "fee": {"$ref": "#/$defs/nonnegative_decimal"},
+    "cash_after": {"$ref": "#/$defs/nonnegative_decimal"},
+    "base_after": {"$ref": "#/$defs/nonnegative_decimal"}
+  },
+  "$defs": {"nonnegative_decimal": {"type": "string", "pattern": "^[0-9]+\\.[0-9]{18}$"}},
+  "x-parquet-types": {
+    "base_quantity": "decimal(38,18)",
+    "reference_open_price": "decimal(38,18)",
+    "execution_price": "decimal(38,18)",
+    "gross_notional": "decimal(38,18)",
+    "fee": "decimal(38,18)",
+    "cash_after": "decimal(38,18)",
+    "base_after": "decimal(38,18)"
+  }
+}

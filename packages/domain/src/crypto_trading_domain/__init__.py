@@ -1,3 +1,18 @@
+from .backtest import (
+    BacktestResult,
+    BacktestSummary,
+    Candle,
+    EquityObservation,
+    FillSide,
+    InvalidBacktest,
+    PortfolioState,
+    SimulatedFill,
+    SmaCrossoverStrategy,
+    Strategy,
+    StrategyDecision,
+    TargetPosition,
+    run_backtest,
+)
 from .market_trades import (
     MarketTradeRawEvent,
     event_id_for_trade,
@@ -6,8 +21,21 @@ from .market_trades import (
 )
 
 __all__ = [
+    "BacktestResult",
+    "BacktestSummary",
+    "Candle",
+    "EquityObservation",
+    "FillSide",
+    "InvalidBacktest",
     "MarketTradeRawEvent",
+    "PortfolioState",
+    "SimulatedFill",
+    "SmaCrossoverStrategy",
+    "Strategy",
+    "StrategyDecision",
+    "TargetPosition",
     "event_id_for_trade",
     "market_trade_event",
+    "run_backtest",
     "utc_now",
 ]

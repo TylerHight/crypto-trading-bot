@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/backtest-equity-v1.json",
+  "title": "Backtest equity observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["window_start", "close", "cash", "base_quantity", "position", "equity", "drawdown"],
+  "properties": {
+    "window_start": {"type": "string", "format": "date-time"},
+    "close": {"$ref": "#/$defs/nonnegative_decimal"},
+    "cash": {"$ref": "#/$defs/nonnegative_decimal"},
+    "base_quantity": {"$ref": "#/$defs/nonnegative_decimal"},
+    "position": {"enum": ["FLAT", "LONG"]},
+    "equity": {"$ref": "#/$defs/nonnegative_decimal"},
+    "drawdown": {"$ref": "#/$defs/nonnegative_decimal"}
+  },
+  "$defs": {"nonnegative_decimal": {"type": "string", "pattern": "^[0-9]+\\.[0-9]{18}$"}},
+  "x-parquet-types": {
+    "close": "decimal(38,18)",
+    "cash": "decimal(38,18)",
+    "base_quantity": "decimal(38,18)",
+    "equity": "decimal(38,18)",
+    "drawdown": "decimal(38,18)"
+  }
+}

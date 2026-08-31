@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/backtest-decision-v1.json",
+  "title": "Backtest strategy decision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision_time", "observed_candle_window_start", "fast_sma", "slow_sma", "previous_target", "new_target", "strategy_version"],
+  "properties": {
+    "decision_time": {"type": "string", "format": "date-time"},
+    "observed_candle_window_start": {"type": "string", "format": "date-time"},
+    "fast_sma": {"type": "string", "pattern": "^[0-9]+\\.[0-9]{18}$"},
+    "slow_sma": {"type": "string", "pattern": "^[0-9]+\\.[0-9]{18}$"},
+    "previous_target": {"enum": ["FLAT", "LONG"]},
+    "new_target": {"enum": ["FLAT", "LONG"]},
+    "strategy_version": {"const": "sma-crossover-long-only-v1"}
+  },
+  "x-parquet-types": {"fast_sma": "decimal(38,18)", "slow_sma": "decimal(38,18)"}
+}
