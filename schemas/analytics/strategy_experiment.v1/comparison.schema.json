@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/oos-strategy-comparison-v1.json",
+  "title": "Out-of-sample strategy comparison v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["baseline", "evaluation_range", "execution_mode", "selected_candidate", "selection_basis", "strategy", "strategy_backtest_key", "strategy_backtest_manifest_sha256", "strategy_backtest_manifest_uri", "strategy_excess_absolute_return", "strategy_excess_percentage_return", "test_range"],
+  "properties": {
+    "baseline": {"type": "object"},
+    "evaluation_range": {"const": "out_of_sample"},
+    "execution_mode": {"const": "simulation"},
+    "selected_candidate": {"type": "object"},
+    "selection_basis": {"const": "train_and_validation_only"},
+    "strategy": {"type": "object"},
+    "strategy_backtest_key": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "strategy_backtest_manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "strategy_backtest_manifest_uri": {"type": "string"},
+    "strategy_excess_absolute_return": {"type": "string"},
+    "strategy_excess_percentage_return": {"type": "string"},
+    "test_range": {"type": "object"}
+  }
+}

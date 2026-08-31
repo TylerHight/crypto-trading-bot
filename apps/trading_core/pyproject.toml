@@ -17,7 +17,10 @@ dependencies = [
 
 [project.scripts]
 backtest-market-candles = "crypto_trading_core.backtest:main"
+evaluate-strategy-experiment = "crypto_trading_core.evaluate_experiment:main"
+prepare-strategy-experiment = "crypto_trading_core.prepare_experiment:main"
 validate-backtest = "crypto_trading_core.validate_backtest:main"
+validate-strategy-experiment = "crypto_trading_core.validate_experiment:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/crypto_trading_core"]

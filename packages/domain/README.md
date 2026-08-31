@@ -15,3 +15,7 @@ trade identity.
 target-position decisions, a versioned long-only SMA strategy, exact simulated
 fills, portfolio state, and a no-look-ahead event-time runner. It contains no
 storage, query-engine, transport, or exchange imports.
+
+The same module also provides `buy-and-hold-long-only-v1`. It purchases at the
+first evaluation open with the shared simulated broker, applies identical costs
+and rounding, and marks the position to each close without forced liquidation.

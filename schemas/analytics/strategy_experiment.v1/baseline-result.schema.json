@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/buy-and-hold-range-result-v1.json",
+  "title": "Buy-and-hold range result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["range_name", "baseline_key", "baseline_version", "starting_equity", "ending_equity", "absolute_return", "percentage_return", "maximum_drawdown", "fill_count", "total_fees", "gross_traded_notional", "percentage_candles_long", "evaluation_candles"],
+  "properties": {
+    "range_name": {"enum": ["train", "validation", "test"]},
+    "baseline_key": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "baseline_version": {"const": "buy-and-hold-long-only-v1"},
+    "starting_equity": {"$ref": "#/$defs/decimal"},
+    "ending_equity": {"$ref": "#/$defs/decimal"},
+    "absolute_return": {"$ref": "#/$defs/decimal"},
+    "percentage_return": {"$ref": "#/$defs/decimal"},
+    "maximum_drawdown": {"$ref": "#/$defs/decimal"},
+    "fill_count": {"const": 1},
+    "total_fees": {"$ref": "#/$defs/decimal"},
+    "gross_traded_notional": {"$ref": "#/$defs/decimal"},
+    "percentage_candles_long": {"$ref": "#/$defs/decimal"},
+    "evaluation_candles": {"type": "integer", "minimum": 2}
+  },
+  "$defs": {"decimal": {"type": "string", "pattern": "^-?[0-9]+\\.[0-9]{18}$"}}
+}

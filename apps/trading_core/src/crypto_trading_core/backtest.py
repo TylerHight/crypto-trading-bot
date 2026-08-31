@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 import duckdb
@@ -134,15 +134,19 @@ def _configure_duckdb(
     return translated.rstrip("/") + "/**/*.parquet"
 
 
-def load_candles(
+def load_candle_range(
     source: PublishedCandleSnapshot,
-    spec: BacktestSpec,
     *,
+    exchange: str,
+    symbol: str,
+    start: datetime,
+    end: datetime,
+    warmup_candles: int,
     storage_settings: StorageSettings,
     maximum_input_candles: int,
 ) -> tuple[Candle, ...]:
-    warmup_start = spec.start - timedelta(minutes=spec.slow_period - 1)
-    expected = spec.slow_period - 1 + int((spec.end - spec.start) / timedelta(minutes=1))
+    warmup_start = start - timedelta(minutes=warmup_candles)
+    expected = warmup_candles + int((end - start) / timedelta(minutes=1))
     if expected > maximum_input_candles:
         raise InvalidBacktestInput("requested range exceeds BACKTEST_MAXIMUM_INPUT_CANDLES")
     if source.candle_count < expected:
@@ -170,12 +174,12 @@ def load_candles(
             ORDER BY window_start
             """,
             [
-                spec.exchange,
-                spec.symbol,
+                exchange,
+                symbol,
                 warmup_start.date(),
-                (spec.end - timedelta(minutes=1)).date(),
+                (end - timedelta(minutes=1)).date(),
                 warmup_start.replace(tzinfo=None),
-                spec.end.replace(tzinfo=None),
+                end.replace(tzinfo=None),
             ],
         ).fetchall()
     except duckdb.Error as error:
@@ -220,6 +224,36 @@ def load_candles(
     return tuple(candles)
 
 
+def load_candles(
+    source: PublishedCandleSnapshot,
+    spec: BacktestSpec,
+    *,
+    storage_settings: StorageSettings,
+    maximum_input_candles: int,
+) -> tuple[Candle, ...]:
+    return load_candle_range(
+        source,
+        exchange=spec.exchange,
+        symbol=spec.symbol,
+        start=spec.start,
+        end=spec.end,
+        warmup_candles=spec.slow_period - 1,
+        storage_settings=storage_settings,
+        maximum_input_candles=maximum_input_candles,
+    )
+
+
+class CandleLoader(Protocol):
+    def __call__(
+        self,
+        source: PublishedCandleSnapshot,
+        spec: BacktestSpec,
+        *,
+        storage_settings: StorageSettings,
+        maximum_input_candles: int,
+    ) -> tuple[Candle, ...]: ...
+
+
 def _summary_dict(summary: Any) -> dict[str, Any]:
     return asdict(summary)
 
@@ -261,6 +295,7 @@ def run_application(
     store: ObjectStorage | None = None,
     run_id: str | None = None,
     started_at: datetime | None = None,
+    candle_loader: CandleLoader = load_candles,
 ) -> dict[str, Any]:
     storage = store or ObjectStorage(settings.storage)
     started = started_at or datetime.now(UTC)
@@ -318,7 +353,7 @@ def run_application(
             "manifest_uri": manifest_uri,
         }
 
-    candles = load_candles(
+    candles = candle_loader(
         source,
         spec,
         storage_settings=settings.storage,

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/strategy-selection-manifest-v1.json",
+  "title": "Sealed strategy selection manifest v1",
+  "type": "object",
+  "required": ["status", "selection_key", "selection_status", "test_data_accessed", "selected_candidate", "identity", "artifacts"],
+  "properties": {
+    "status": {"const": "published"},
+    "selection_key": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "selection_status": {"enum": ["selected", "no_candidate_selected"]},
+    "test_data_accessed": {"const": false},
+    "selected_candidate": {"type": ["object", "null"]},
+    "identity": {"type": "object"},
+    "artifacts": {"type": "object"}
+  }
+}

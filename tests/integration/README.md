@@ -45,6 +45,21 @@ Remove-Item Env:RUN_INTEGRATION_TESTS
 podman compose stop minio
 ```
 
+The strategy-experiment integration test runs the two-stage research workflow
+through MinIO. It proves the sealed selection contains train/validation rows but
+no test metrics, evaluates the immutable winner against buy-and-hold on the OOS
+range, validates both stages, checks idempotency, and detects a corrupted
+comparison artifact:
+
+```powershell
+podman compose up -d minio
+$env:RUN_EXPERIMENT_INTEGRATION_TESTS = "1"
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests\integration\test_strategy_experiment_pipeline.py
+Remove-Item Env:RUN_EXPERIMENT_INTEGRATION_TESTS
+podman compose stop minio
+```
+
 The candle-backtest integration test publishes a seven-candle fixture to local
 MinIO and runs the actual trading-core CLI. It checks exact next-open fills,
 costs and summary counts, direct S3 result validation, idempotent reruns, changed

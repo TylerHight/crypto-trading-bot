@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/strategy-candidate-result-v1.json",
+  "title": "Strategy candidate range result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidate_id", "fast_period", "slow_period", "range_name", "backtest_key", "backtest_manifest_uri", "backtest_manifest_sha256", "starting_equity", "ending_equity", "absolute_return", "percentage_return", "maximum_drawdown", "fill_count", "total_fees", "gross_traded_notional", "percentage_candles_long", "baseline_percentage_return", "excess_percentage_return", "evaluation_candles"],
+  "properties": {
+    "candidate_id": {"type": "string"},
+    "fast_period": {"type": "integer"},
+    "slow_period": {"type": "integer"},
+    "range_name": {"enum": ["train", "validation"]},
+    "backtest_key": {"$ref": "#/$defs/hash"},
+    "backtest_manifest_uri": {"type": "string"},
+    "backtest_manifest_sha256": {"$ref": "#/$defs/hash"},
+    "starting_equity": {"$ref": "#/$defs/decimal"},
+    "ending_equity": {"$ref": "#/$defs/decimal"},
+    "absolute_return": {"$ref": "#/$defs/decimal"},
+    "percentage_return": {"$ref": "#/$defs/decimal"},
+    "maximum_drawdown": {"$ref": "#/$defs/decimal"},
+    "fill_count": {"type": "integer", "minimum": 0},
+    "total_fees": {"$ref": "#/$defs/decimal"},
+    "gross_traded_notional": {"$ref": "#/$defs/decimal"},
+    "percentage_candles_long": {"$ref": "#/$defs/decimal"},
+    "baseline_percentage_return": {"$ref": "#/$defs/decimal"},
+    "excess_percentage_return": {"$ref": "#/$defs/decimal"},
+    "evaluation_candles": {"type": "integer", "minimum": 2}
+  },
+  "$defs": {
+    "decimal": {"type": "string", "pattern": "^-?[0-9]+\\.[0-9]{18}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

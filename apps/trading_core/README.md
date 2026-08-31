@@ -92,3 +92,60 @@ that one backtest demonstrates profitability.
 Future paper and live modes will add PostgreSQL state, synchronous risk, and an
 execution boundary. They must reuse the domain strategy semantics and remain
 separate from this immutable research workflow.
+
+## Sealed train/validation/test experiment
+
+Strategy experiments are deliberately split into two commands. Preparation
+hash-pins a strict JSON specification, runs every declared SMA candidate only on
+train and validation ranges, applies the versioned eligibility/ranking policy,
+and publishes a sealed selection with `test_data_accessed=false`:
+
+```powershell
+$spec = Resolve-Path .\experiments\btc-usd-sma-v1.json
+$digest = (Get-FileHash $spec -Algorithm SHA256).Hash.ToLowerInvariant()
+
+prepare-strategy-experiment `
+  --spec $spec `
+  --spec-sha256 $digest `
+  --output .\artifacts\strategy-experiments\v1 `
+  --local-development
+```
+
+Review and hash the immutable selection manifest. The evaluation command has no
+candidate, cost, or range override flags; it runs exactly the sealed candidate
+and `buy-and-hold-long-only-v1` on the specification's test interval:
+
+```powershell
+$selection = Resolve-Path .\artifacts\strategy-experiments\v1\selections\<key>\manifest.json
+$selectionDigest = (Get-FileHash $selection -Algorithm SHA256).Hash.ToLowerInvariant()
+
+evaluate-strategy-experiment `
+  --selection-manifest $selection `
+  --selection-manifest-sha256 $selectionDigest `
+  --output .\artifacts\strategy-experiments\v1 `
+  --local-development
+
+validate-strategy-experiment selection `
+  --manifest $selection `
+  --manifest-sha256 $selectionDigest `
+  --local-development
+```
+
+Use the `evaluation` validator subcommand for the resulting evaluation manifest.
+Validators replay the underlying pinned backtests and baselines, verify artifact
+hashes and schemas, and recalculate selection or comparison results.
+
+Additional configuration:
+
+```text
+EXPERIMENT_SPEC_PREFIX
+EXPERIMENT_OUTPUT_PREFIX
+EXPERIMENT_MAXIMUM_CANDIDATES
+EXPERIMENT_MAXIMUM_CANDIDATE_CANDLE_EVALUATIONS
+```
+
+Selection eligibility requires the configured minimum train fills and maximum
+train/validation drawdowns. Eligible candidates rank by validation return,
+validation drawdown, validation fees, then candidate ID. All losing and rejected
+candidates remain in the artifacts. No eligible candidate exits with code `2`
+and prevents test evaluation.

@@ -16,6 +16,7 @@ from typing import Protocol
 DECIMAL_QUANTUM = Decimal("0.000000000000000001")
 ONE_MINUTE = timedelta(minutes=1)
 STRATEGY_VERSION = "sma-crossover-long-only-v1"
+BASELINE_VERSION = "buy-and-hold-long-only-v1"
 
 
 class InvalidBacktest(ValueError):
@@ -218,7 +219,7 @@ def _validate_costs(fee_bps: Decimal, slippage_bps: Decimal) -> None:
             raise InvalidBacktest(f"{field} must be finite and in [0, 10000)")
 
 
-def _fill(
+def simulate_target_fill(
     state: PortfolioState,
     decision: StrategyDecision,
     candle: Candle,
@@ -343,7 +344,7 @@ def run_backtest(
 
     for candle in evaluation:
         if pending is not None:
-            state, fill = _fill(
+            state, fill = simulate_target_fill(
                 state,
                 pending,
                 candle,
@@ -405,3 +406,78 @@ def run_backtest(
         ending_base_quantity=state.base_quantity,
     )
     return BacktestResult(tuple(decisions), tuple(fills), tuple(observations), summary)
+
+
+def run_buy_and_hold(
+    candles: tuple[Candle, ...],
+    *,
+    start: datetime,
+    end: datetime,
+    starting_cash: Decimal,
+    fee_bps: Decimal,
+    slippage_bps: Decimal,
+) -> BacktestResult:
+    """Buy at the first evaluation open, hold, and mark to every close."""
+
+    _validate_costs(fee_bps, slippage_bps)
+    cash = _q18(starting_cash)
+    if cash <= 0:
+        raise InvalidBacktest("starting_cash must be positive")
+    _, evaluation = _validate_candle_sequence(
+        candles, start=start, end=end, slow_period=1
+    )
+    initial_state = PortfolioState(cash=cash, base_quantity=_q18(Decimal(0)))
+    allocation = StrategyDecision(
+        decision_time=evaluation[0].window_start,
+        observed_candle_window_start=evaluation[0].window_start,
+        fast_sma=_q18(evaluation[0].open),
+        slow_sma=_q18(evaluation[0].open),
+        previous_target=TargetPosition.FLAT,
+        new_target=TargetPosition.LONG,
+        strategy_version=BASELINE_VERSION,
+    )
+    state, fill = simulate_target_fill(
+        initial_state,
+        allocation,
+        evaluation[0],
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+    )
+    observations: list[EquityObservation] = []
+    peak = cash
+    for candle in evaluation:
+        equity = _q18(state.cash + state.base_quantity * candle.close)
+        peak = max(peak, equity)
+        observations.append(
+            EquityObservation(
+                window_start=candle.window_start,
+                close=_q18(candle.close),
+                cash=state.cash,
+                base_quantity=state.base_quantity,
+                position=state.position,
+                equity=equity,
+                drawdown=_q18(_ratio(peak - equity, peak)),
+            )
+        )
+
+    ending_equity = observations[-1].equity
+    absolute_return = _q18(ending_equity - cash)
+    summary = BacktestSummary(
+        starting_equity=cash,
+        ending_equity=ending_equity,
+        absolute_return=absolute_return,
+        percentage_return=_q18(_ratio(absolute_return, cash) * Decimal(100)),
+        maximum_drawdown=max(observation.drawdown for observation in observations),
+        decisions=0,
+        buys=1,
+        sells=0,
+        unfilled_terminal_decisions=0,
+        total_fees=fill.fee,
+        gross_traded_notional=fill.gross_notional,
+        percentage_candles_long=_q18(Decimal(100)),
+        warmup_candles=0,
+        evaluation_candles=len(evaluation),
+        ending_cash=state.cash,
+        ending_base_quantity=state.base_quantity,
+    )
+    return BacktestResult((), (fill,), tuple(observations), summary)

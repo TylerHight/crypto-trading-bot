@@ -1,4 +1,5 @@
 from .backtest import (
+    BASELINE_VERSION,
     BacktestResult,
     BacktestSummary,
     Candle,
@@ -12,6 +13,8 @@ from .backtest import (
     StrategyDecision,
     TargetPosition,
     run_backtest,
+    run_buy_and_hold,
+    simulate_target_fill,
 )
 from .market_trades import (
     MarketTradeRawEvent,
@@ -21,6 +24,7 @@ from .market_trades import (
 )
 
 __all__ = [
+    "BASELINE_VERSION",
     "BacktestResult",
     "BacktestSummary",
     "Candle",
@@ -37,5 +41,7 @@ __all__ = [
     "event_id_for_trade",
     "market_trade_event",
     "run_backtest",
+    "run_buy_and_hold",
+    "simulate_target_fill",
     "utc_now",
 ]

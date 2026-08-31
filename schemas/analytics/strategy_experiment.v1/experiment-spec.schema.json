@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading-bot.local/schemas/strategy-experiment-spec-v1.json",
+  "title": "Strategy experiment specification v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["experiment_spec_version", "name", "candle_manifest_uri", "candle_manifest_sha256", "exchange", "symbol", "starting_cash", "fee_bps", "slippage_bps", "ranges", "candidates", "selection_policy"],
+  "properties": {
+    "experiment_spec_version": {"const": "v1"},
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+    "candle_manifest_uri": {"type": "string", "minLength": 1},
+    "candle_manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "exchange": {"type": "string", "pattern": "^[a-z0-9_-]+$"},
+    "symbol": {"type": "string", "pattern": "^[A-Z0-9]+-[A-Z0-9]+$"},
+    "starting_cash": {"$ref": "#/$defs/decimal"},
+    "fee_bps": {"$ref": "#/$defs/decimal"},
+    "slippage_bps": {"$ref": "#/$defs/decimal"},
+    "ranges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["train", "validation", "test"],
+      "properties": {
+        "train": {"$ref": "#/$defs/range"},
+        "validation": {"$ref": "#/$defs/range"},
+        "test": {"$ref": "#/$defs/range"}
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 50,
+      "items": {"$ref": "#/$defs/candidate"}
+    },
+    "selection_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_train_fills", "maximum_train_drawdown", "maximum_validation_drawdown"],
+      "properties": {
+        "minimum_train_fills": {"type": "integer", "minimum": 0},
+        "maximum_train_drawdown": {"$ref": "#/$defs/decimal"},
+        "maximum_validation_drawdown": {"$ref": "#/$defs/decimal"}
+      }
+    }
+  },
+  "$defs": {
+    "decimal": {"type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"},
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"type": "string", "format": "date-time"},
+        "end": {"type": "string", "format": "date-time"}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "fast_period", "slow_period"],
+      "properties": {
+        "candidate_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+        "fast_period": {"type": "integer", "minimum": 1},
+        "slow_period": {"type": "integer", "minimum": 2}
+      }
+    }
+  }
+}

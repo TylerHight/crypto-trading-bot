@@ -9,3 +9,6 @@ Generated Python models and Spark schemas may live near their consumers, but the
 `analytics/backtest_results.v1/` defines reproducible simulated strategy
 decisions, fills, and equity observations. These are research artifacts only;
 they are not exchange execution facts.
+
+`analytics/strategy_experiment.v1/` defines the two-stage train/validation
+selection and sealed out-of-sample comparison contracts.
