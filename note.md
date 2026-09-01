@@ -1,517 +1,349 @@
-# User story: Seal and evaluate a strategy out of sample
+# User story: Forward-test a sealed strategy in paper trading
 
 ## Story
 
-As a strategy researcher,
-I want a reproducible experiment that selects one fixed SMA configuration using
-only train and validation data and then evaluates it once on an unseen test
-interval against buy-and-hold,
-so that I can judge whether the strategy deserves paper-trading work without
-look-ahead, silent parameter changes, or selective reporting.
+As a strategy operator,
+I want to run one sealed, out-of-sample-evaluated SMA strategy against newly
+published market candles in a durable paper portfolio,
+so that I can observe forward performance and operational behavior without
+placing real orders or risking funds.
 
 ## Why this is next
 
-The project can now turn a pinned candle snapshot into a deterministic simulated
-trading result:
+The project now has a trustworthy research path:
 
 ```text
-published candle manifest
-    -> versioned SMA decisions
-    -> next-open simulated fills with explicit costs
-    -> immutable equity and performance artifacts
+raw trades
+    -> curated trades
+    -> immutable one-minute candles
+    -> deterministic backtests
+    -> sealed train/validation selection
+    -> one-time out-of-sample evaluation against buy-and-hold
 ```
 
-One successful backtest is not evidence of a useful strategy. The next risk is
-research leakage: trying parameters while looking at the final test period and
-then presenting the best result as if it were unseen.
+That is enough offline assurance for this stage. More research validators would
+have diminishing value before the strategy is exercised as a long-running
+process.
 
-Address that before paper trading. This story consumes the existing backtest
-engine rather than changing its timing, cost, or portfolio semantics. It adds a
-small, auditable experiment workflow with a hard boundary between parameter
-selection and out-of-sample evaluation.
+The next unknowns are operational: whether the strategy behaves correctly as
+candles arrive over time, survives restarts, avoids duplicate decisions and
+fills, carries pending actions across processing batches, and exposes enough
+evidence for an operator to understand its state.
+
+This story moves into paper trading while retaining a hard safety boundary. It
+must not add exchange authentication, balance access, order submission, or live
+execution code.
 
 ## Outcome
 
-Given one SHA-pinned `market_candles.v1` snapshot and a finite, checked-in set of
-SMA candidates, support two separate commands:
+Given a SHA-pinned successful strategy-evaluation manifest, create one durable
+paper-trading session and incrementally process SHA-pinned
+`market_candles.v1` publications occurring strictly after the evaluation test
+interval.
 
-1. **Prepare and seal**: evaluate every candidate on train and validation
-   intervals, choose one candidate by a deterministic documented policy, and
-   publish an immutable sealed-selection manifest without reading test candles.
-2. **Evaluate**: accept only the sealed-selection manifest pinned by digest,
-   evaluate exactly its selected candidate and a buy-and-hold baseline on the
-   test interval, and publish an immutable comparison report.
+The workflow must:
 
-Both stages must remain simulation-only. They must not publish trading signals,
-place orders, use private credentials, or contact an exchange.
+1. Create an immutable session identity from the evaluation, engine versions,
+   cost model, starting portfolio, safety limit, and operator approval.
+2. Persist cash, position, pending target, processed-candle checkpoint,
+   decisions, simulated fills, equity, and session status in PostgreSQL.
+3. Process each accepted candle exactly once across retries and restarts.
+4. Preserve the existing SMA close-decision/next-open-fill semantics.
+5. Expose a read-only status command explaining portfolio state and forward
+   performance.
+6. Refuse any path that could contact a private exchange endpoint or place an
+   order.
+
+## Scope
+
+In scope:
+
+- One sealed `sma-crossover-long-only-v1` candidate per session.
+- One exchange and symbol per session.
+- SHA-pinned immutable candle manifests.
+- Bounded processing invoked by an operator or test.
+- PostgreSQL locally, using a schema suitable for RDS later.
+- The exact fees and slippage inherited from the sealed experiment.
+- Durable audit records and read-only status reporting.
+
+Out of scope:
+
+- Private exchange credentials or authenticated exchange endpoints.
+- Real or testnet order placement.
+- An execution gateway, broker adapter, or balance lookup.
+- Multiple strategies in one portfolio.
+- Shorting, leverage, derivatives, or margin.
+- Dynamic parameters or automatic strategy promotion.
+- Airflow scheduling, dashboards, alert delivery, or a control API.
+- Re-optimizing a strategy while its paper session is running.
 
 ## User-visible commands
 
-Preparation should look similar to:
+Create a session from a validated evaluation manifest pinned by its exact
+SHA-256 digest:
 
 ```powershell
-prepare-strategy-experiment `
-  --spec .\experiments\btc-usd-sma-v1.json `
-  --spec-sha256 <64-lowercase-hex-digest> `
-  --output s3a://crypto-data/analytics/strategy_experiments/v1
+create-paper-session `
+  --evaluation-manifest s3a://crypto-data/analytics/strategy_experiments/v1/evaluations/<evaluation-key>/manifest.json `
+  --evaluation-manifest-sha256 <64-lowercase-hex-digest> `
+  --approved-by <nonempty-operator-identifier> `
+  --approval-note "Forward test approved after reviewing OOS results" `
+  --maximum-drawdown 0.20
 ```
 
-Out-of-sample evaluation should be a separate invocation:
+Process one bounded candle publication:
 
 ```powershell
-evaluate-strategy-experiment `
-  --selection-manifest s3a://crypto-data/analytics/strategy_experiments/v1/selections/<selection-key>/manifest.json `
-  --selection-manifest-sha256 <64-lowercase-hex-digest> `
-  --output s3a://crypto-data/analytics/strategy_experiments/v1
+process-paper-candles `
+  --session-id <paper-session-id> `
+  --candle-manifest s3a://crypto-data/analytics/market_candles/v1/manifests/<snapshot-key>/manifest.json `
+  --candle-manifest-sha256 <64-lowercase-hex-digest>
 ```
 
-Provide equivalent module entry points for development and testing. Local paths
-must require explicit local-development mode, consistent with the backtest CLI.
+Inspect current state without mutating it:
 
-## Experiment specification v1
-
-The preparation command accepts one UTF-8 JSON document pinned by the SHA-256 of
-its exact bytes. Check in a JSON Schema and a documented example.
-
-The specification must contain at least:
-
-```json
-{
-  "experiment_spec_version": "v1",
-  "name": "btc-usd-sma-v1",
-  "candle_manifest_uri": "s3a://crypto-data/analytics/market_candles/v1/manifests/<snapshot-key>/manifest.json",
-  "candle_manifest_sha256": "<64-lowercase-hex>",
-  "exchange": "coinbase",
-  "symbol": "BTC-USD",
-  "starting_cash": "10000.000000000000000000",
-  "fee_bps": "40",
-  "slippage_bps": "5",
-  "ranges": {
-    "train": {"start": "2025-01-01T00:00:00Z", "end": "2025-07-01T00:00:00Z"},
-    "validation": {"start": "2025-07-01T00:00:00Z", "end": "2025-10-01T00:00:00Z"},
-    "test": {"start": "2025-10-01T00:00:00Z", "end": "2026-01-01T00:00:00Z"}
-  },
-  "candidates": [
-    {"candidate_id": "sma-5-20", "fast_period": 5, "slow_period": 20},
-    {"candidate_id": "sma-10-50", "fast_period": 10, "slow_period": 50}
-  ],
-  "selection_policy": {
-    "minimum_train_fills": 2,
-    "maximum_train_drawdown": "0.500000000000000000",
-    "maximum_validation_drawdown": "0.500000000000000000"
-  }
-}
+```powershell
+show-paper-session --session-id <paper-session-id>
 ```
 
-Reject unknown top-level and nested fields so misspelled settings cannot be
-silently ignored.
+Pause, resume, or permanently stop a session:
 
-## Specification validation
+```powershell
+set-paper-session-state `
+  --session-id <paper-session-id> `
+  --state paused `
+  --actor <operator-identifier> `
+  --reason "Investigating an input discontinuity"
+```
 
-- Verify the raw specification digest before parsing.
-- Require `experiment_spec_version = "v1"`.
-- Require a nonempty stable experiment name.
-- Apply the existing exchange, symbol, UTC timestamp, decimal, basis-point, and
-  candle-manifest safety rules.
-- Require at least two and at most 50 candidates.
-- Candidate IDs must be unique and match a conservative lowercase identifier
-  pattern.
-- Candidate `(fast_period, slow_period)` pairs must be unique.
-- Every candidate must satisfy `0 < fast_period < slow_period`.
-- All selection thresholds must be explicit, finite, and within their documented
-  bounds.
-- The complete requested candle count, including independent warm-up for each
-  range and the buy-and-hold observations, must fit the configured resource cap.
+Provide equivalent Python module entry points. Database credentials must come
+from `PAPER_DATABASE_URL` or a supported secret source and must never appear
+in logs, reports, database audit text, or errors.
 
-A specification digest, candle digest, candidate, cost, range, policy, or engine
-version change must produce a new selection identity.
+## Session creation
 
-## Time ranges and warm-up
+Before writing state, creation must:
 
-Every range is half-open: `[start, end)`.
+- Verify the evaluation manifest's exact digest before parsing.
+- Run the existing evaluation validator, including selection, source, strategy,
+  baseline, artifact, and comparison replay checks.
+- Require `execution_mode = "simulation"` throughout the lineage.
+- Require a selected candidate and completed test evaluation.
+- Recover the exact strategy version, parameters, exchange, symbol, fee,
+  slippage, and final test boundary from the sealed artifacts.
+- Reject unknown versions and malformed or unsafe URIs.
+- Require explicit local-development mode for local artifacts.
 
-- All boundaries must be aligned UTC minutes.
-- Require `train.start < train.end <= validation.start < validation.end <=
-  test.start < test.end`.
-- Gaps between ranges are allowed and must be reported.
-- Overlap is forbidden.
-- Each range must contain at least two evaluation candles.
-- Each SMA run loads its own preceding `slow_period - 1` candles from the same
-  pinned snapshot for warm-up.
-- Warm-up candles may initialize indicators but never contribute decisions,
-  fills, returns, or observations before that range's start.
-- Continue to reject missing one-minute candles inside a candidate's required
-  warm-up or evaluation sequence.
+Identical logical inputs must resolve the same session identity and existing
+row. Changing the evaluation digest, portfolio seed, engine version, maximum
+drawdown, or approval must produce a different identity.
 
-Train and validation runs are independent simulations that each begin with the
-same starting cash and zero base holdings. Portfolio state must not flow from
-one range to another.
+Record the operator identifier, timestamp, bounded approval note, and evaluation
+digest. Approval is audit evidence; it is not a claim that the strategy is
+profitable.
 
-## Hard test-data embargo
+## Durable PostgreSQL state
 
-The preparation stage must not read, query, deserialize, summarize, or validate
-candle rows whose `window_start` is at or after `ranges.test.start`.
+Add a forward-only migration for at least:
 
-It may preserve the test start and end strings from the pinned experiment
-specification and may validate the source manifest itself. It must not inspect
-test prices, counts by test partition, missing-minute status, or test-period
-performance.
+- `paper_sessions`
+- `paper_candle_inputs`
+- `paper_decisions`
+- `paper_fills`
+- `paper_equity`
+- `paper_session_events`
 
-Make this separation visible in the API: the preparation data reader receives
-only train and validation ranges. Do not load the full snapshot and filter test
-rows later in Python.
+Use database constraints to enforce:
 
-The sealed-selection manifest must state:
+- A stable unique session identity.
+- One processed candle per session, exchange, symbol, and open time.
+- One decision per session and decision candle.
+- At most one fill for a pending decision.
+- Nonnegative cash, quantity, fees, and notional.
+- UTC timestamps and explicit version fields.
+- Append-only decisions, fills, equity, and lifecycle events.
+
+The session row may hold the current portfolio and checkpoint for efficient
+reads, but all mutations must be reconstructable from immutable event rows.
+Rows must never contain object-storage secrets, database passwords, private
+exchange credentials, or complete raw exchange payloads.
+
+## Incremental processing
+
+`process-paper-candles` processes one pinned immutable manifest and exits. It
+does not poll forever.
+
+For each invocation:
+
+1. Lock and validate the session in a database transaction.
+2. Verify the candle manifest digest and published artifacts with existing
+   candle safety rules.
+3. Select only the session exchange and symbol.
+4. Reject candles at or before the evaluation test end.
+5. Reject a gap after the session has started; never silently skip a minute.
+6. Treat already committed candles as idempotent only when source identity and
+   values match exactly.
+7. Reject conflicting data for an already processed candle.
+8. Apply unseen candles in ascending open-time order.
+9. Commit input identity, decision, possible next-open fill, equity, and
+   checkpoint atomically.
+
+Report counts for discovered, already processed, newly processed, decided,
+filled, and rejected candles. Retry after an ambiguous client failure must
+converge on the same database state.
+
+## Strategy continuity
+
+Paper mode must reuse domain strategy and broker rules:
+
+- Seed SMA history with the last `slow_period - 1` candles ending at the
+  evaluation boundary from the evaluation's pinned source snapshot.
+- A target decided from candle `t` may fill only at candle `t+1` open.
+- A pending target must survive process exit and restart.
+- Fees, slippage, rounding, and affordable quantity must exactly match the
+  backtest engine.
+- Mark open positions to every accepted close.
+- Do not force liquidation at a batch boundary.
+- Do not invent decisions for gaps or partial candles.
+
+Parity tests must prove that one-candle, multi-batch, and single-batch processing
+produce the same decisions, fills, cash, position, and equity as the existing
+deterministic domain rules.
+
+## Safety and lifecycle
+
+Session states are:
 
 ```text
-test_data_accessed = false
+active -> paused
+active -> stopped
+paused -> active
+paused -> stopped
 ```
 
-The integration test must use an instrumented reader or forbidden test fixture
-that fails immediately if preparation attempts to access the test interval.
+`stopped` is terminal. Every state change requires an explicit command,
+actor, and append-only reason. Processing a paused or stopped session must not
+advance its checkpoint.
 
-## Candidate backtests
+Automatically pause before processing more candles when:
 
-Reuse the implemented `sma-crossover-long-only-v1` strategy and backtest engine
-without copying their calculations.
+- Input timestamps are discontinuous or move backward.
+- A pinned artifact conflicts with an existing candle.
+- Portfolio invariants fail.
+- Current drawdown exceeds the immutable session maximum.
 
-For every candidate, run:
+An automatic pause records a machine-readable reason and safe diagnostic
+context. It never automatically resumes. These controls protect the paper
+experiment; they do not replace the independent risk controls needed for live
+execution.
 
-- One train backtest.
-- One validation backtest.
+## Read-only status
 
-Use the exact starting cash, fee, slippage, next-open execution, quantity
-rounding, terminal-decision, and mark-to-market behavior from the existing
-engine. Persist each underlying backtest key and manifest digest in the
-experiment artifacts.
+`show-paper-session` returns deterministic JSON containing:
 
-Do not modify SMA behavior or cost assumptions for an individual range or
-candidate.
+- Session ID, state, and engine versions.
+- Evaluation and selection manifest URIs and digests.
+- Exchange, symbol, strategy, and sealed parameters.
+- Starting cash, cash, position quantity, and marked equity.
+- Pending target and decision time, if any.
+- First and last processed candle times.
+- Candle, decision, buy-fill, and sell-fill counts.
+- Gross return, net return, fees, and maximum drawdown.
+- A forward buy-and-hold baseline using the same first candle and costs.
+- Last state-change reason and time.
 
-## Buy-and-hold baseline v1
+It must use a read-only transaction and cannot repair, advance, or resume a
+session.
 
-Add an infrastructure-neutral, versioned baseline named
-`buy-and-hold-long-only-v1`.
+## Audit and concurrency
 
-For each reported range:
+- Use structured logs containing session IDs and safe digests.
+- Never log credential-bearing database URLs.
+- Every state-changing command records command ID, actor, timestamp, action,
+  reason, and resulting state.
+- Accept an optional command ID for retry correlation; otherwise generate one.
+- Reusing a command ID with different arguments is an error.
+- Database transactions must prevent concurrent advancement of one session.
 
-1. Start with the same cash and zero base quantity.
-2. Buy the maximum affordable base quantity at the first evaluation candle's
-   open using the same buy slippage, fee, scale, and round-down rules as the SMA
-   simulated broker.
-3. Make no further trades.
-4. Mark the position to every candle close.
-5. Do not force-liquidate at the end.
+## Configuration
 
-The baseline produces a fill, equity curve, drawdown, total fee, ending equity,
-and percentage return using the same result types where practical. Baseline
-warm-up is unnecessary, but it must use the exact same evaluation candles and
-range boundaries as the candidate comparison.
-
-Use shared portfolio and broker functions; do not implement slightly different
-fee or slippage arithmetic in the experiment application.
-
-## Deterministic selection policy v1
-
-Selection uses train and validation results only.
-
-First mark a candidate eligible when all of the following hold:
-
-- Train fill count is at least `minimum_train_fills`.
-- Train maximum drawdown is no greater than `maximum_train_drawdown`.
-- Validation maximum drawdown is no greater than
-  `maximum_validation_drawdown`.
-
-Rank eligible candidates by this exact total ordering:
-
-1. Highest validation percentage return.
-2. Lowest validation maximum drawdown.
-3. Lowest validation total fees.
-4. Lexicographically smallest `candidate_id`.
-
-Decimal comparisons must use exact stored values, not floats or formatted
-strings.
-
-Report train and validation excess return relative to buy-and-hold, but do not
-use the baseline or test result as an undocumented tie-breaker.
-
-If no candidate is eligible, publish a valid sealed result with
-`selection_status = "no_candidate_selected"`. The evaluation command must then
-refuse to open the test interval. This is a legitimate research outcome, not an
-infrastructure failure.
-
-## Sealed-selection publication
-
-Calculate a deterministic selection key from canonical JSON containing at
-least:
+Provide bounded settings for:
 
 ```text
-experiment specification SHA-256
-candle snapshot key and manifest SHA-256
-all train and validation ranges
-all candidates and selection thresholds
-starting cash and costs
-strategy, baseline, backtest-engine, experiment-engine, and result-schema versions
+PAPER_DATABASE_URL
+PAPER_CANDLE_MANIFEST_PREFIX
+PAPER_EVALUATION_MANIFEST_PREFIX
+PAPER_MAXIMUM_CANDLES_PER_RUN
+PAPER_TRANSACTION_TIMEOUT_SECONDS
 ```
 
-Runtime timestamps, host names, temporary paths, and run IDs must not affect the
-key.
+Environment settings cannot weaken sealed strategy parameters or costs.
+Maximum drawdown belongs to the immutable session identity.
 
-Publish immutable artifacts such as:
-
-```text
-analytics/strategy_experiments/v1/runs/<run-id>/selection/
-    candidate_results.parquet
-    baseline_results.parquet
-    selection_summary.json
-
-analytics/strategy_experiments/v1/selections/<selection-key>/manifest.json
-```
-
-Publish the manifest last with create-if-absent semantics. It must include:
-
-- The specification URI and digest.
-- Candle manifest URI, digest, snapshot key, and selected output URI.
-- Exact costs, policy, candidates, and train/validation ranges.
-- Test range boundaries copied from the specification.
-- `test_data_accessed = false`.
-- Eligibility outcome and reason for every candidate.
-- The selected candidate and deterministic rank evidence, or the explicit
-  no-selection outcome.
-- Underlying backtest and baseline identities.
-- Artifact schemas, row counts, byte counts, and SHA-256 digests.
-- All component versions.
-
-An identical preparation must resolve the existing selection. A conflict for the
-same key must fail closed.
-
-## Out-of-sample evaluation
-
-The evaluation command must:
-
-1. Pin and validate the sealed-selection manifest by exact SHA-256.
-2. Recalculate its selection key and verify all referenced artifact hashes.
-3. Require `selection_status = "selected"` and
-   `test_data_accessed = false`.
-4. Load the original experiment specification and candle manifest by their
-   recorded digests.
-5. Verify the test boundaries and selected parameters exactly match the sealed
-   selection.
-6. Run only the selected SMA candidate on the test interval.
-7. Run `buy-and-hold-long-only-v1` on that same test interval.
-8. Publish the full candidate and baseline artifacts plus a comparison report.
-
-The command has no parameter override flags. Changing a candidate, cost, range,
-or source requires a new preparation.
-
-Calculate an evaluation key from the sealed-selection key and digest plus all
-component versions. The OOS result is immutable and idempotent:
-
-```text
-analytics/strategy_experiments/v1/runs/<run-id>/evaluation/
-    strategy_decisions.parquet
-    strategy_fills.parquet
-    strategy_equity_curve.parquet
-    baseline_fills.parquet
-    baseline_equity_curve.parquet
-    comparison.json
-
-analytics/strategy_experiments/v1/evaluations/<evaluation-key>/manifest.json
-```
-
-## Comparison report
-
-For train, validation, and test, report the SMA candidate and buy-and-hold values
-side by side:
-
-- Starting and ending equity.
-- Absolute and percentage return.
-- Maximum drawdown.
-- Fill count and total fees.
-- Gross traded notional.
-- Percentage of candles spent long.
-- Excess absolute and percentage return versus buy-and-hold.
-- Effective range and candle count.
-
-The OOS report must clearly label:
-
-```text
-selection_basis = train_and_validation_only
-evaluation_range = out_of_sample
-execution_mode = simulation
-```
-
-Always publish losing, underperforming, and high-drawdown results. Do not suppress
-negative metrics, replace the selected candidate after evaluation, or rewrite an
-existing report.
-
-Do not automatically declare the strategy profitable, statistically
-significant, or approved for live trading. The report is evidence for human
-review.
-
-## Versioning and schemas
-
-Define constants for at least:
-
-```text
-experiment_spec_version = v1
-experiment_engine_version = strategy-experiment-engine-v1
-selection_policy_version = validation-return-selection-v1
-baseline_version = buy-and-hold-long-only-v1
-experiment_result_schema_version = v1
-```
-
-Check in language-neutral schemas for:
-
-- Experiment specification.
-- Candidate range result.
-- Baseline range result.
-- Sealed-selection manifest.
-- OOS comparison result.
-
-Breaking changes require a new version and new deterministic identities. A code
-change that can alter any calculation must change the applicable component
-version before publication.
-
-## Validation commands
-
-Provide standalone validators for both publication stages.
-
-The selection validator must verify:
-
-- Specification, candle, and artifact digests.
-- Candidate completeness and uniqueness.
-- Train/validation range and version consistency.
-- Underlying backtest and baseline reproducibility.
-- Eligibility calculations and exact deterministic ranking.
-- Selected parameters match the winning row.
-- No test-derived artifact or metric is present.
-- Selection identity matches its manifest key.
-
-The evaluation validator must additionally verify:
-
-- The sealed-selection digest and identity.
-- Test range and selected parameters cannot be overridden.
-- Strategy and baseline results reproduce from pinned candles.
-- Detailed artifacts reconcile to every summary metric.
-- Excess-return calculations are exact.
-- Evaluation identity matches its manifest key.
-
-Validators must work with local files and configured S3-compatible storage.
-
-## Bounded execution and reporting
-
-- Cap candidate count at 50.
-- Cap candles per range and total candidate-candle evaluations.
-- Query only one exchange, symbol, interval, and requested range at a time.
-- Push event-date and timestamp predicates into DuckDB.
-- Keep deterministic ordering by `window_start`.
-- Reports may contain aggregate performance values but must never contain S3
-  secrets or private credentials.
-- Log all losing candidates; sample lists must remain bounded.
-- A failed stage may leave an unreferenced run directory but must never publish a
-  success manifest.
-
-## Tests
+## Required tests
 
 ### Unit tests
 
-Cover at least:
+- Stable and changed-input session identities.
+- Evaluation digest and lineage validation failures.
+- Rejection of unevaluated, unselected, or non-simulation input.
+- Warm-up and first forward decision boundary.
+- Decision-at-close and fill-at-next-open across invocations.
+- Fee, slippage, rounding, and equity parity with the domain engine.
+- Idempotent retries and conflicting-candle rejection.
+- Missing, duplicate, out-of-order, and pre-test candle rejection.
+- Paused, resumed, and stopped behavior.
+- Automatic drawdown pause.
+- Credential redaction.
+- Status calculations and forward buy-and-hold comparison.
 
-- Specification digest, unknown-field, decimal, range, and candidate validation.
-- Duplicate IDs and duplicate period pairs.
-- Candidate-count and resource caps.
-- Independent range warm-up and starting portfolios.
-- Buy-and-hold uses the first evaluation open and exact shared cost math.
-- Baseline and SMA use identical mark-to-market and drawdown calculations.
-- Every eligibility gate.
-- Every selection tie-break in its documented order.
-- No-candidate-selected behavior.
-- Canonical identity stability and version sensitivity.
-- Changed candidate order does not change selection or identity after canonical
-  candidate sorting.
-- Negative and baseline-underperforming results remain in reports.
+### PostgreSQL integration tests
 
-### Leakage tests
+- Apply migrations to a clean local database.
+- Create a session from a validator-compatible evaluation fixture.
+- Process candles and verify durable state.
+- Retry without duplicate decisions, fills, or equity.
+- Carry and fill a pending target across publication boundaries.
+- Simulate a client failure after commit and retry safely.
+- Run two processors concurrently and prove serialized results.
+- Restart the application and continue from its checkpoint.
+- Prove read-only status does not mutate tables.
 
-Prove preparation cannot observe the test period:
+### Regression tests
 
-- Use a reader double that raises if asked for a timestamp at or after
-  `test.start`.
-- Change every test-period price while leaving the specification, train, and
-  validation data unchanged; the sealed selection and its artifacts must remain
-  identical.
-- Change a validation price; the selection key or selected evidence must change.
-- Verify the evaluation command has no candidate or cost override arguments.
+- Existing collection, integrity, reconciliation, curation, candle, backtest,
+  and sealed-experiment tests remain green.
+- Paper-trading code does not import a private exchange client or expose an
+  order-placement interface.
 
-### Integration test
+## Acceptance criteria
 
-Using an isolated MinIO prefix:
+This story is complete when:
 
-1. Publish a pinned candle fixture containing train, validation, and test ranges.
-2. Include candidates that exercise eligibility and deterministic tie-breaking.
-3. Run the real preparation command.
-4. Validate the sealed selection and prove it contains no test metrics.
-5. Run the real evaluation command from the pinned selection digest.
-6. Assert exact selected-candidate and buy-and-hold test artifacts.
-7. Run the evaluation validator.
-8. Repeat both commands and require idempotent existing publications.
-9. Tamper with the selection, an underlying result, and the comparison artifact;
-   each must fail closed.
-10. Verify only MinIO was needed and no order or exchange component was contacted.
-11. Clean only the isolated prefix.
-
-## Documentation
-
-Document:
-
-- How to author, hash, and review an experiment specification.
-- Why preparation and evaluation are separate commands.
-- Exact split, warm-up, eligibility, ranking, and tie-break semantics.
-- Buy-and-hold timing and cost formulas.
-- How to pin and validate both manifests.
-- How to inspect every losing candidate and OOS result.
-- Why this workflow reduces leakage but does not establish statistical
-  significance or future profitability.
-
-## Exit behavior
-
-- `0`: successful publication or valid idempotent resolution.
-- `2`: valid preparation completed with no eligible candidate; no evaluation is
-  permitted.
-- `4`: invalid input, digest mismatch, leakage guard, validation failure, or
-  conflicting immutable publication.
-- Other nonzero values: unexpected infrastructure or execution failure.
-
-## Out of scope
-
-- Generating or mutating candidate parameters automatically
-- Grid, random, Bayesian, genetic, or machine-learning optimization
-- Selecting parameters using test-period results
-- Walk-forward optimization or nested cross-validation
-- Statistical significance, confidence intervals, Monte Carlo analysis, or
-  claims of profitability
-- Strategies other than the existing SMA candidate and buy-and-hold baseline
-- Multiple symbols, cross-asset allocation, shorts, or leverage
-- New fill models, spread estimation, latency, rejection, or partial fills
-- Live candle consumption, paper trading, order commands, or exchange access
-- PostgreSQL state, kill switches, and restart recovery
-- Dashboards, dbt marts, Airflow scheduling, and cloud infrastructure
-
-## Follow-up story
-
-Build a restart-safe live paper-trading walking skeleton around the same strategy
-and portfolio interfaces. Consume closed candle events, persist decisions and a
-single-account ledger in PostgreSQL, apply stale-data and exposure limits, and
-support an operator kill switch. Use a paper execution adapter only; private
-exchange order placement remains a later, separately gated story.
+1. A validated, digest-pinned evaluation creates one idempotent paper session
+   with auditable operator approval.
+2. Repeated bounded publications advance the durable portfolio exactly once
+   and preserve strategy semantics across restarts.
+3. Fixed input produces the same outcome regardless of batch size.
+4. Gaps, conflicts, bad lineage, paused state, and drawdown breaches fail
+   closed without advancing the portfolio.
+5. Operators can inspect paper performance and its forward buy-and-hold
+   baseline without mutation.
+6. PostgreSQL tests prove transactionality, retry safety, concurrency safety,
+   and restart recovery.
+7. No code in this increment can authenticate to an exchange or place an
+   order.
+8. Documentation states that paper results are simulations and do not
+   establish future profitability.
 
 ## Definition of done
 
-The story is complete when a reviewed experiment specification can be prepared
-without any test-candle access; the chosen configuration is sealed by immutable
-identity and cannot be changed during evaluation; the selected SMA strategy and
-the exact-cost buy-and-hold baseline are reproducibly evaluated on the unseen
-test range; every candidate, loss, drawdown, and comparison remains visible;
-tampering or leakage fails closed; identical invocations resolve the same
-publications; and neither stage has any exchange-order capability.
+- PostgreSQL migration and storage implementation are checked in.
+- Session creation, bounded candle processing, lifecycle, and status commands
+  are documented and executable.
+- Domain behavior is reused or factored cleanly; broker math is not duplicated
+  with different semantics.
+- Unit and PostgreSQL integration tests pass.
+- Existing tests, formatting, typing, schemas, and lockfile checks pass.
+- A local walkthrough demonstrates create, process, retry, inspect, pause,
+  resume, and stop using simulation-only inputs.

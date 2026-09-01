@@ -149,3 +149,72 @@ train/validation drawdowns. Eligible candidates rank by validation return,
 validation drawdown, validation fees, then candidate ID. All losing and rejected
 candidates remain in the artifacts. No eligible candidate exits with code `2`
 and prevents test evaluation.
+
+## Durable paper trading
+
+Paper mode forward-tests one sealed, evaluated candidate without exchange
+authentication or order-placement capability. It advances only from immutable,
+SHA-pinned candle publications and stores its portfolio, pending target,
+checkpoint, decisions, simulated fills, equity, and audit events in PostgreSQL.
+
+Start PostgreSQL and apply the forward-only migration:
+
+```powershell
+podman compose up -d postgres
+$env:PAPER_DATABASE_URL = "postgresql://paper_app:paper_app@127.0.0.1:5432/crypto_trading"
+migrate-paper-database
+```
+
+Create a session after reviewing a validated OOS evaluation:
+
+```powershell
+create-paper-session `
+  --evaluation-manifest <evaluation-manifest-uri> `
+  --evaluation-manifest-sha256 <64-lowercase-hex-digest> `
+  --approved-by research-operator `
+  --approval-note "Reviewed OOS comparison and approved a forward simulation" `
+  --maximum-drawdown 0.20
+```
+
+Process one bounded publication, retry it safely, and inspect state:
+
+```powershell
+process-paper-candles `
+  --session-id <session-id> `
+  --candle-manifest <candle-manifest-uri> `
+  --candle-manifest-sha256 <64-lowercase-hex-digest> `
+  --command-id paper-candles-2026-09-01
+
+show-paper-session --session-id <session-id>
+```
+
+Lifecycle changes are explicit and audited:
+
+```powershell
+set-paper-session-state `
+  --session-id <session-id> `
+  --state paused `
+  --actor research-operator `
+  --reason "Reviewing forward behavior"
+```
+
+Allowed transitions are `active -> paused|stopped` and
+`paused -> active|stopped`; stopped is terminal. Gaps, conflicting previously
+processed candles, portfolio invariant failures, and maximum-drawdown breaches
+fail closed. Processing is transactional and row-locked so retries, restarts,
+and concurrent invocations cannot duplicate state changes.
+
+Configuration:
+
+```text
+PAPER_DATABASE_URL
+PAPER_CANDLE_MANIFEST_PREFIX
+PAPER_EVALUATION_MANIFEST_PREFIX
+PAPER_MAXIMUM_CANDLES_PER_RUN
+PAPER_TRANSACTION_TIMEOUT_SECONDS
+```
+
+Paper mode reuses the same SMA, next-open fill, fee, slippage, and rounding
+rules as backtesting. It remains a simulation and does not establish future
+profitability. This increment intentionally has no exchange-adapter dependency
+and cannot submit an order.

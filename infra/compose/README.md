@@ -13,9 +13,13 @@ The stack contains:
 - the containerized Coinbase collector;
 - MinIO and a one-shot `crypto-data` bucket initializer;
 - MinIO console at <http://localhost:9001>; and
-- a checkpointed PySpark Structured Streaming raw sink.
+- a checkpointed PySpark Structured Streaming raw sink; and
+- PostgreSQL for durable paper-session state at `localhost:5432`.
 
 Kafka is available from Windows at `localhost:9092` and inside Compose at `kafka:29092`. MinIO's S3 API is available at `localhost:9000`. The local-only MinIO credentials are `minioadmin` / `minioadmin`.
+The local PostgreSQL database is `crypto_trading`, with the development-only
+user/password `paper_app` / `paper_app`. Override `PAPER_DATABASE_URL` outside
+the local Compose environment and keep credentials out of command output.
 
 ## Start
 
@@ -98,6 +102,15 @@ $env:RUN_INTEGRATION_TESTS = "1"
 Remove-Item Env:RUN_INTEGRATION_TESTS
 ```
 
+Verify paper-state migration, restart, retry, concurrency, and read-only status:
+
+```powershell
+$env:RUN_PAPER_INTEGRATION_TESTS = "1"
+$env:PAPER_DATABASE_URL = "postgresql://paper_app:paper_app@127.0.0.1:5432/crypto_trading"
+.\.venv\Scripts\python.exe -m pytest -q tests\integration\test_paper_trading_postgres.py
+Remove-Item Env:RUN_PAPER_INTEGRATION_TESTS
+```
+
 ## Stop or reset
 
 Stop services while retaining Kafka messages, MinIO objects, checkpoints, and the Spark dependency cache:
@@ -114,6 +127,8 @@ podman compose down --volumes
 
 The reset is destructive: all locally archived Kafka and MinIO data is removed.
 
-PostgreSQL, Airflow, dbt, and trading services remain future phases and are intentionally absent from this stack.
+Airflow, dbt, an execution gateway, and live trading remain future phases and
+are intentionally absent from this stack. PostgreSQL supports simulation-only
+paper state and has no exchange connectivity.
 
 For operational verification and incident recovery, use the [local market-data pipeline runbook](../../docs/runbooks/local-market-data-pipeline.md). If the Podman VM claims to be running but the CLI cannot connect, use the [Podman machine connection recovery runbook](../../docs/runbooks/podman-machine-connection-recovery.md).

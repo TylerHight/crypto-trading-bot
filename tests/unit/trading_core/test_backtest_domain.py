@@ -7,6 +7,8 @@ from crypto_trading_domain.backtest import (
     FillSide,
     InvalidBacktest,
     TargetPosition,
+    advance_incremental_backtest,
+    initialize_incremental_backtest,
     run_backtest,
 )
 
@@ -168,3 +170,34 @@ def test_gap_reordering_and_decimal_overflow_fail_closed() -> None:
             fee_bps=Decimal(0),
             slippage_bps=Decimal(0),
         )
+
+
+def test_incremental_engine_matches_backtest_across_process_boundaries() -> None:
+    candles = fixture_candles()
+    expected = run_fixture()
+    state = initialize_incremental_backtest(
+        candles[:2], starting_cash=Decimal(1000), slow_period=3
+    )
+    decisions = []
+    fills = []
+    equity = []
+    for item in candles[2:]:
+        step = advance_incremental_backtest(
+            state,
+            item,
+            fast_period=2,
+            slow_period=3,
+            fee_bps=Decimal(40),
+            slippage_bps=Decimal(5),
+        )
+        state = step.state
+        if step.decision is not None:
+            decisions.append(step.decision)
+        if step.fill is not None:
+            fills.append(step.fill)
+        equity.append(step.equity)
+
+    assert tuple(decisions) == expected.decisions
+    assert tuple(fills) == expected.fills
+    assert tuple(equity) == expected.equity_curve
+    assert state.pending_decision == expected.decisions[-1]

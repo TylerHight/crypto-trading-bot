@@ -161,6 +161,25 @@ class BacktestResult:
     summary: BacktestSummary
 
 
+@dataclass(frozen=True)
+class IncrementalBacktestState:
+    """Minimal durable state needed to advance the backtest engine one candle."""
+
+    recent_closes: tuple[Decimal, ...]
+    target: TargetPosition
+    portfolio: PortfolioState
+    pending_decision: StrategyDecision | None
+    peak_equity: Decimal
+
+
+@dataclass(frozen=True)
+class IncrementalBacktestStep:
+    state: IncrementalBacktestState
+    decision: StrategyDecision | None
+    fill: SimulatedFill | None
+    equity: EquityObservation
+
+
 class Strategy(Protocol):
     version: str
 
@@ -211,6 +230,110 @@ class SmaCrossoverStrategy:
         )
         self._target = target
         return decision
+
+    @property
+    def target(self) -> TargetPosition:
+        return self._target
+
+
+def initialize_incremental_backtest(
+    warmup_candles: tuple[Candle, ...],
+    *,
+    starting_cash: Decimal,
+    slow_period: int,
+) -> IncrementalBacktestState:
+    """Create forward-processing state from exactly one SMA warm-up window."""
+
+    cash = _q18(starting_cash)
+    if cash <= 0:
+        raise InvalidBacktest("starting_cash must be positive")
+    if isinstance(slow_period, bool) or slow_period < 2:
+        raise InvalidBacktest("slow_period must be at least two")
+    if len(warmup_candles) != slow_period - 1:
+        raise InvalidBacktest("incremental strategy requires exact warm-up coverage")
+    previous: Candle | None = None
+    for candle in warmup_candles:
+        if previous is not None and (
+            candle.exchange != previous.exchange
+            or candle.symbol != previous.symbol
+            or candle.window_start != previous.window_end
+        ):
+            raise InvalidBacktest("warm-up candles have a duplicate, gap, or identity change")
+        previous = candle
+    return IncrementalBacktestState(
+        recent_closes=tuple(_q18(candle.close) for candle in warmup_candles),
+        target=TargetPosition.FLAT,
+        portfolio=PortfolioState(cash=cash, base_quantity=_q18(Decimal(0))),
+        pending_decision=None,
+        peak_equity=cash,
+    )
+
+
+def advance_incremental_backtest(
+    state: IncrementalBacktestState,
+    candle: Candle,
+    *,
+    fast_period: int,
+    slow_period: int,
+    fee_bps: Decimal,
+    slippage_bps: Decimal,
+) -> IncrementalBacktestStep:
+    """Advance one complete candle using the deterministic backtest semantics."""
+
+    _validate_costs(fee_bps, slippage_bps)
+    if len(state.recent_closes) != slow_period - 1:
+        raise InvalidBacktest("incremental state does not contain one SMA warm-up window")
+    if state.pending_decision is not None and state.pending_decision.new_target is state.target:
+        # The target changes when the decision is produced, before its next-open fill.
+        expected_position = state.pending_decision.previous_target
+        if state.portfolio.position is not expected_position:
+            raise InvalidBacktest("pending decision does not match the portfolio")
+    elif state.pending_decision is not None:
+        raise InvalidBacktest("pending decision does not match the strategy target")
+    elif state.portfolio.position is not state.target:
+        raise InvalidBacktest("incremental portfolio and strategy target disagree")
+
+    portfolio = state.portfolio
+    fill: SimulatedFill | None = None
+    if state.pending_decision is not None:
+        portfolio, fill = simulate_target_fill(
+            portfolio,
+            state.pending_decision,
+            candle,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+        )
+
+    strategy = SmaCrossoverStrategy(fast_period, slow_period)
+    strategy._target = state.target
+    for close in state.recent_closes:
+        strategy._closes.append(close)
+    decision = strategy.observe(candle)
+
+    equity = _q18(portfolio.cash + portfolio.base_quantity * candle.close)
+    peak = max(state.peak_equity, equity)
+    observation = EquityObservation(
+        window_start=candle.window_start,
+        close=_q18(candle.close),
+        cash=portfolio.cash,
+        base_quantity=portfolio.base_quantity,
+        position=portfolio.position,
+        equity=equity,
+        drawdown=_q18(_ratio(peak - equity, peak)),
+    )
+    next_closes = (*state.recent_closes, _q18(candle.close))[-(slow_period - 1) :]
+    return IncrementalBacktestStep(
+        state=IncrementalBacktestState(
+            recent_closes=next_closes,
+            target=strategy.target,
+            portfolio=portfolio,
+            pending_decision=decision,
+            peak_equity=peak,
+        ),
+        decision=decision,
+        fill=fill,
+        equity=observation,
+    )
 
 
 def _validate_costs(fee_bps: Decimal, slippage_bps: Decimal) -> None:

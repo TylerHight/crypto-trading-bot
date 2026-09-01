@@ -19,3 +19,8 @@ storage, query-engine, transport, or exchange imports.
 The same module also provides `buy-and-hold-long-only-v1`. It purchases at the
 first evaluation open with the shared simulated broker, applies identical costs
 and rounding, and marks the position to each close without forced liquidation.
+
+The module also exposes an incremental backtest state and one-candle advance
+operation. Paper mode persists that state between bounded invocations, keeping
+its SMA target, pending next-open fill, portfolio, and drawdown semantics
+identical to a single deterministic backtest run.

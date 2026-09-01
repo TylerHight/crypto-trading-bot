@@ -12,13 +12,19 @@ dependencies = [
     "crypto-trading-domain",
     "duckdb>=1.4,<2",
     "pyarrow>=21,<24",
+    "psycopg[binary]>=3.2,<4",
     "tzdata>=2025",
 ]
 
 [project.scripts]
 backtest-market-candles = "crypto_trading_core.backtest:main"
+create-paper-session = "crypto_trading_core.create_paper_session:main"
 evaluate-strategy-experiment = "crypto_trading_core.evaluate_experiment:main"
+migrate-paper-database = "crypto_trading_core.migrate_paper_database:main"
 prepare-strategy-experiment = "crypto_trading_core.prepare_experiment:main"
+process-paper-candles = "crypto_trading_core.process_paper_candles:main"
+set-paper-session-state = "crypto_trading_core.set_paper_session_state:main"
+show-paper-session = "crypto_trading_core.show_paper_session:main"
 validate-backtest = "crypto_trading_core.validate_backtest:main"
 validate-strategy-experiment = "crypto_trading_core.validate_experiment:main"
 

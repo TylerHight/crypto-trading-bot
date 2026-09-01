@@ -45,6 +45,20 @@ Remove-Item Env:RUN_INTEGRATION_TESTS
 podman compose stop minio
 ```
 
+The paper-trading persistence test applies the checked-in migration to local
+PostgreSQL and proves durable restart recovery, idempotent command retry,
+serialized concurrent processing, and non-mutating status reads:
+
+```powershell
+podman compose up -d postgres
+$env:RUN_PAPER_INTEGRATION_TESTS = "1"
+$env:PAPER_DATABASE_URL = "postgresql://paper_app:paper_app@127.0.0.1:5432/crypto_trading"
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests\integration\test_paper_trading_postgres.py
+Remove-Item Env:RUN_PAPER_INTEGRATION_TESTS
+podman compose stop postgres
+```
+
 The strategy-experiment integration test runs the two-stage research workflow
 through MinIO. It proves the sealed selection contains train/validation rows but
 no test metrics, evaluates the immutable winner against buy-and-hold on the OOS

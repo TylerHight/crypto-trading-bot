@@ -49,7 +49,8 @@ podman compose up -d --build
 podman compose ps
 ```
 
-The stack includes the collector, Kafka, a checkpointed Spark raw sink, MinIO, and inspection UIs:
+The stack includes the collector, Kafka, a checkpointed Spark raw sink, MinIO,
+PostgreSQL for durable paper-trading state, and inspection UIs:
 
 - Kafka UI: <http://localhost:8083>
 - MinIO console: <http://localhost:9001> (`minioadmin` / `minioadmin`)
