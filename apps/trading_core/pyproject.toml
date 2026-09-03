@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "crypto-trading-core"
 version = "0.1.0"
 description = "Deterministic strategy, portfolio, and backtesting application"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "boto3>=1.40,<2",
     "crypto-trading-domain",
@@ -21,6 +21,11 @@ backtest-market-candles = "crypto_trading_core.backtest:main"
 create-paper-session = "crypto_trading_core.create_paper_session:main"
 evaluate-strategy-experiment = "crypto_trading_core.evaluate_experiment:main"
 migrate-paper-database = "crypto_trading_core.migrate_paper_database:main"
+start-paper-pilot = "crypto_trading_core.start_paper_pilot:main"
+run-paper-pilot-cycle = "crypto_trading_core.run_paper_pilot_cycle:main"
+report-paper-pilot = "crypto_trading_core.report_paper_pilot:main"
+finalize-paper-pilot = "crypto_trading_core.finalize_paper_pilot:main"
+validate-paper-pilot = "crypto_trading_core.validate_paper_pilot:main"
 prepare-strategy-experiment = "crypto_trading_core.prepare_experiment:main"
 process-paper-candles = "crypto_trading_core.process_paper_candles:main"
 set-paper-session-state = "crypto_trading_core.set_paper_session_state:main"
@@ -30,6 +35,10 @@ validate-strategy-experiment = "crypto_trading_core.validate_experiment:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/crypto_trading_core"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/crypto_trading_core/pilot_plan.schema.json" = "crypto_trading_core/pilot_plan.schema.json"
+"src/crypto_trading_core/pilot_assessment.schema.json" = "crypto_trading_core/pilot_assessment.schema.json"
 
 [tool.uv.sources]
 crypto-trading-domain = { workspace = true }

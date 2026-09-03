@@ -340,6 +340,7 @@ class CoinbasePublicTradeClient:
 
         while True:
             health: CoinbaseConnectionHealth | None = None
+            pending_message: asyncio.Future[Any] | None = None
             close_reason = "connection_attempt_failed"
 
             try:
@@ -437,11 +438,25 @@ class CoinbasePublicTradeClient:
                             next_summary - now_monotonic,
                         )
 
-                        try:
-                            raw_message = await asyncio.wait_for(
-                                anext(websocket_iterator),
-                                timeout=wait_seconds,
+                        if pending_message is None:
+                            pending_message = asyncio.ensure_future(
+                                anext(websocket_iterator)
                             )
+
+                        completed, _ = await asyncio.wait(
+                            (pending_message,),
+                            timeout=wait_seconds,
+                        )
+                        if not completed:
+                            # A summary deadline must not cancel ``anext``. Doing
+                            # so closes the WebSocket's async iterator and turns
+                            # every periodic summary into a reconnect.
+                            continue
+
+                        completed_message = pending_message
+                        pending_message = None
+                        try:
+                            raw_message = completed_message.result()
                         except StopAsyncIteration:
                             close_reason = "websocket_stream_ended"
                             break
@@ -527,6 +542,9 @@ class CoinbasePublicTradeClient:
                 close_reason = type(error).__name__
                 LOGGER.exception("Coinbase WebSocket disconnected")
             finally:
+                if pending_message is not None:
+                    pending_message.cancel()
+                    await asyncio.gather(pending_message, return_exceptions=True)
                 if health is not None:
                     self._emit_observation(
                         health.observation(

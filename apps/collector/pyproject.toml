@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "crypto-trading-collector"
 version = "0.1.0"
 description = "Public crypto market-trade WebSocket collector"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "confluent-kafka>=2.3,<4",
     "crypto-trading-domain",

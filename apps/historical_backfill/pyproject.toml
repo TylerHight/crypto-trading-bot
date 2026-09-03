@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "crypto-historical-backfill"
 version = "0.1.0"
 description = "Bounded market-data reconciliation and historical backfill tools"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "boto3>=1.40,<2",
     "confluent-kafka>=2.3,<4",

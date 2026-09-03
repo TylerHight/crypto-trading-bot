@@ -108,6 +108,7 @@ class MemoryPaperRepository:
                     "action": "create",
                     "actor": session.spec.approved_by,
                     "command_id": command_id,
+                    "created_at": session.created_at,
                     "reason": session.spec.approval_note,
                     "resulting_state": session.state.value,
                 }
@@ -153,6 +154,7 @@ class MemoryPaperRepository:
                     "action": action,
                     "actor": actor,
                     "command_id": command_id,
+                    "created_at": mutation.session.updated_at,
                     "reason": mutation.report.get("pause_reason") or reason,
                     "resulting_state": mutation.session.state.value,
                 }
@@ -211,9 +213,11 @@ def _spec_document(spec: PaperSessionSpec) -> dict[str, Any]:
         "experiment_engine_version": spec.experiment_engine_version,
         "fast_period": spec.fast_period,
         "fee_bps": format(spec.fee_bps, "f"),
+        "forward_start": _time(spec.forward_start) if spec.forward_start is not None else None,
         "maximum_drawdown": format(spec.maximum_drawdown, "f"),
         "paper_engine_version": spec.paper_engine_version,
         "paper_schema_version": spec.paper_schema_version,
+        "pilot_id": spec.pilot_id,
         "selection_key": spec.selection_key,
         "selection_manifest_sha256": spec.selection_manifest_sha256,
         "selection_manifest_uri": spec.selection_manifest_uri,
@@ -253,6 +257,12 @@ def _spec_from_document(value: dict[str, Any]) -> PaperSessionSpec:
         experiment_engine_version=value["experiment_engine_version"],
         paper_engine_version=value["paper_engine_version"],
         paper_schema_version=value["paper_schema_version"],
+        pilot_id=value.get("pilot_id"),
+        forward_start=(
+            _parse_time(value["forward_start"])
+            if value.get("forward_start") is not None
+            else None
+        ),
     )
 
 
@@ -408,10 +418,11 @@ class PostgresPaperRepository:
             raise InvalidPaperTrading("paper database connection failed") from error
 
     def migrate(self) -> None:
-        sql = files("crypto_trading_core").joinpath("migrations/001_paper_trading.sql").read_text()
         try:
             with self._connect() as connection:
-                connection.execute(sql)
+                for name in ("001_paper_trading.sql", "002_paper_pilots.sql"):
+                    sql = files("crypto_trading_core").joinpath("migrations", name).read_text()
+                    connection.execute(sql)
         except InvalidPaperTrading:
             raise
         except Exception as error:

@@ -1,6 +1,8 @@
 param(
     [ValidateRange(1, 100)]
-    [int]$SampleLimit = 20
+    [int]$SampleLimit = 20,
+
+    [string]$ReportOutput
 )
 
 function Wait-ForHealthyContainer {
@@ -40,14 +42,25 @@ if ($LASTEXITCODE -ne 0) {
 Wait-ForHealthyContainer -ContainerName "crypto-trading-bot_kafka_1"
 Wait-ForHealthyContainer -ContainerName "crypto-trading-bot_minio_1"
 
+$auditEnvironmentArguments = @(
+    "-e",
+    "RAW_AUDIT_SAMPLE_LIMIT=$SampleLimit"
+)
+
+if ($env:RAW_AUDIT_REPORT_PREFIX) {
+    $auditEnvironmentArguments += @(
+        "-e",
+        "RAW_AUDIT_REPORT_PREFIX=$env:RAW_AUDIT_REPORT_PREFIX"
+    )
+}
+
 $auditArguments = @(
     "compose",
     "run",
     "--rm",
     "--no-deps",
-    "-T",
-    "-e",
-    "RAW_AUDIT_SAMPLE_LIMIT=$SampleLimit",
+    "-T"
+) + $auditEnvironmentArguments + @(
     "raw-sink",
     "/opt/spark/bin/spark-submit",
     "--master",
@@ -58,6 +71,10 @@ $auditArguments = @(
     "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.8,org.apache.hadoop:hadoop-aws:3.3.4",
     "/opt/spark/work-dir/jobs/spark/entrypoints/audit_raw_market_trades.py"
 )
+
+if ($ReportOutput) {
+    $auditArguments += @("--report-output", $ReportOutput)
+}
 
 & podman @auditArguments
 exit $LASTEXITCODE

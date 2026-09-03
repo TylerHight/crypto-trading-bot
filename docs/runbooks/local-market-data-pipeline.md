@@ -284,12 +284,27 @@ Run the read-only audit:
 .\scripts\run_raw_integrity_audit.ps1
 ```
 
+To preserve a passing or failing result as append-only evidence for curation,
+provide a unique object URI beneath the configured evidence prefix:
+
+```powershell
+.\scripts\run_raw_integrity_audit.ps1 `
+  -ReportOutput s3a://crypto-data/reconciliation/raw-integrity/<run-id>.json
+```
+
+The allowed prefix defaults to
+`s3a://crypto-data/reconciliation/raw-integrity` and can be changed with
+`$env:RAW_AUDIT_REPORT_PREFIX` before invoking the script. Output URIs containing
+credentials, query strings, fragments, path traversal, or a location outside
+that prefix are rejected, and an existing evidence object is never overwritten.
+
 The script starts Kafka and MinIO if they are stopped and waits for both health
 checks before launching Spark. It does not start the collector or live raw sink,
 and it preserves the existing named data volumes.
 
 The audit does not publish Kafka records, rewrite Parquet, or modify the Spark
-checkpoint. It prints a readable summary followed by one machine-readable line:
+checkpoint. Unless `-ReportOutput` is supplied it performs no writes. It prints
+a readable summary followed by one machine-readable line:
 
 ```text
 Raw integrity audit: PASSED

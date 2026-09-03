@@ -15,12 +15,6 @@ from jobs.spark.transforms.curated_market_trades import (
 
 NOW = datetime(2026, 8, 26, 17, 0, tzinfo=UTC)
 EVENT_TIME = "2026-08-25T14:00:01Z"
-WINDOWS_PYSPARK_WORKER_UNSUPPORTED = pytest.mark.skipif(
-    sys.platform == "win32" and sys.version_info >= (3, 13),
-    reason="Spark 3.5's Python worker is incompatible with Windows Python 3.13",
-)
-
-
 def event_id(symbol: str, trade_id: str) -> str:
     identity = json.dumps(
         ["market.trade.raw", "v1", "coinbase", symbol, trade_id],
@@ -85,6 +79,34 @@ def raw(document: dict[str, object], offset: int = 0) -> dict[str, object]:
 
 def validate(document: dict[str, object], offset: int = 0):
     return validate_raw_record(raw(document, offset), run_id="run-1", curated_at=NOW)
+
+
+def raw_frame(spark, values):
+    from pyspark.sql import types as T
+
+    schema = T.StructType(
+        [
+            T.StructField(
+                "kafka_headers",
+                T.ArrayType(
+                    T.StructType(
+                        [
+                            T.StructField("key", T.StringType(), nullable=False),
+                            T.StructField("value", T.BinaryType(), nullable=False),
+                        ]
+                    )
+                ),
+                nullable=False,
+            ),
+            T.StructField("kafka_key", T.BinaryType(), nullable=False),
+            T.StructField("kafka_offset", T.LongType(), nullable=False),
+            T.StructField("kafka_partition", T.IntegerType(), nullable=False),
+            T.StructField("kafka_timestamp", T.TimestampType(), nullable=False),
+            T.StructField("kafka_topic", T.StringType(), nullable=False),
+            T.StructField("kafka_value", T.BinaryType(), nullable=False),
+        ]
+    )
+    return spark.createDataFrame(values, schema)
 
 
 @pytest.mark.parametrize("producer", ["apps.collector", "apps.historical_backfill"])
@@ -200,6 +222,7 @@ def spark():
         .config("spark.ui.enabled", "false")
         .config("spark.sql.shuffle.partitions", "1")
         .config("spark.sql.session.timeZone", "UTC")
+        .config("spark.executorEnv.PYSPARK_PYTHON", sys.executable)
         .getOrCreate()
     )
     session.sparkContext.setLogLevel("ERROR")
@@ -211,11 +234,10 @@ def spark():
         os.environ["PYSPARK_PYTHON"] = previous_python
 
 
-@WINDOWS_PYSPARK_WORKER_UNSUPPORTED
 def test_exact_cross_producer_duplicates_select_lowest_position(spark) -> None:
     collector = event("same")
     backfill = event("same", producer="apps.historical_backfill")
-    records = spark.createDataFrame([raw(backfill, 8), raw(collector, 4)])
+    records = raw_frame(spark, [raw(backfill, 8), raw(collector, 4)])
 
     frames = curate_market_trades(records, run_id="run", curated_at=NOW)
     selected = frames.curated.collect()
@@ -226,12 +248,11 @@ def test_exact_cross_producer_duplicates_select_lowest_position(spark) -> None:
     assert frames.quarantine.count() == 0
 
 
-@WINDOWS_PYSPARK_WORKER_UNSUPPORTED
 def test_conflicting_duplicate_has_no_winner_and_safe_quarantine(spark) -> None:
     first = event("conflict", price="10")
     second = deepcopy(first)
     second["payload"]["price"] = "11"  # type: ignore[index]
-    records = spark.createDataFrame([raw(second, 2), raw(first, 1)])
+    records = raw_frame(spark, [raw(second, 2), raw(first, 1)])
 
     frames = curate_market_trades(records, run_id="run", curated_at=NOW)
     quarantine = [row.asDict(recursive=True) for row in frames.quarantine.collect()]
@@ -243,14 +264,13 @@ def test_conflicting_duplicate_has_no_winner_and_safe_quarantine(spark) -> None:
     assert "10.000" not in json.dumps(quarantine, default=str)
 
 
-@WINDOWS_PYSPARK_WORKER_UNSUPPORTED
 def test_symbols_are_independent_and_input_order_is_deterministic(spark) -> None:
     values = [raw(event("btc", symbol="BTC-USD"), 3), raw(event("eth", symbol="ETH-USD"), 2)]
     forward = curate_market_trades(
-        spark.createDataFrame(values), run_id="run", curated_at=NOW
+        raw_frame(spark, values), run_id="run", curated_at=NOW
     ).curated.orderBy("event_id").collect()
     reverse = curate_market_trades(
-        spark.createDataFrame(list(reversed(values))), run_id="run", curated_at=NOW
+        raw_frame(spark, list(reversed(values))), run_id="run", curated_at=NOW
     ).curated.orderBy("event_id").collect()
 
     assert forward == reverse

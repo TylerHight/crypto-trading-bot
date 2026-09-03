@@ -1,0 +1,42 @@
+{
+  "candle_manifest_sha256": "a1cf5364d4c30b2929d0b448006cc3897c01646efe204d89b8fe4111f26eb8c6",
+  "candle_manifest_uri": "s3a://crypto-data/analytics/market_candles/v1/manifests/0e751f287dfbcad26795effcdb5e0a69abdd48cbcd86f7e89e06443ab5482163/manifest.json",
+  "candidates": [
+    {
+      "candidate_id": "sma-3-10",
+      "fast_period": 3,
+      "slow_period": 10
+    },
+    {
+      "candidate_id": "sma-5-20",
+      "fast_period": 5,
+      "slow_period": 20
+    }
+  ],
+  "exchange": "coinbase",
+  "experiment_spec_version": "v1",
+  "fee_bps": "40",
+  "name": "btc-usd-sma-pilot-candidate-v1",
+  "ranges": {
+    "test": {
+      "end": "2026-09-01T17:01:00Z",
+      "start": "2026-09-01T16:31:00Z"
+    },
+    "train": {
+      "end": "2026-09-01T16:06:00Z",
+      "start": "2026-09-01T15:26:00Z"
+    },
+    "validation": {
+      "end": "2026-09-01T16:31:00Z",
+      "start": "2026-09-01T16:06:00Z"
+    }
+  },
+  "selection_policy": {
+    "maximum_train_drawdown": "0.050000000000000000",
+    "maximum_validation_drawdown": "0.050000000000000000",
+    "minimum_train_fills": 1
+  },
+  "slippage_bps": "5",
+  "starting_cash": "10000",
+  "symbol": "BTC-USD"
+}

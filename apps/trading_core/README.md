@@ -218,3 +218,93 @@ Paper mode reuses the same SMA, next-open fill, fee, slippage, and rounding
 rules as backtesting. It remains a simulation and does not establish future
 profitability. This increment intentionally has no exchange-adapter dependency
 and cannot submit an order.
+
+## Pre-registered paper pilot
+
+Development is pinned by the repository `.python-version` to Python 3.11; all
+workspace packages support Python 3.11 and 3.12 and explicitly exclude 3.13.
+With `uv` installed, create the reproducible environment and confirm Spark uses
+the same interpreter for its driver and workers:
+
+```powershell
+uv python install 3.11
+uv sync --python 3.11 --all-packages --all-groups
+.\.venv\Scripts\python.exe --version
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Copy `pilots/pilot-plan.example.json`, replace its evaluation URI and digest,
+choose a still-future aligned UTC start, and review every threshold before
+hashing it. The raw bytes are the commitment; editing even whitespace changes
+the identity.
+
+```powershell
+$plan = Resolve-Path .\pilots\btc-usd-sma-forward-v1.json
+$digest = (Get-FileHash $plan -Algorithm SHA256).Hash.ToLowerInvariant()
+
+start-paper-pilot --plan $plan --plan-sha256 $digest `
+  --approved-by research-operator `
+  --approval-note "Reviewed sealed OOS evidence and precommitted pilot criteria"
+
+run-paper-pilot-cycle --pilot-id <pilot-id> `
+  --candle-manifest <new-forward-candle-manifest> `
+  --candle-manifest-sha256 <digest> --command-id cycle-2026-09-15-001
+
+report-paper-pilot --pilot-id <pilot-id> --as-of 2026-09-16T00:00:00Z
+
+finalize-paper-pilot --pilot-id <pilot-id> `
+  --reviewed-by research-operator --review-note "Reviewed immutable evidence"
+```
+
+For a production-like run, set `PAPER_DATABASE_URL`, the existing S3 settings,
+and `PAPER_PILOT_OUTPUT_PREFIX`. Local manifests require
+`--local-development` at registration; that marker is persisted for the whole
+pilot. A production pilot therefore cannot later opt into local synthetic
+inputs. Each cycle is bounded to one published Coinbase candle manifest and a
+stable command ID. The first publication must cover the selected strategy's
+complete contiguous SMA warm-up immediately before `start_not_before`; those
+pre-start candles initialize strategy state but are not stored or counted as
+forward evidence. This allows a sealed evaluation to end before the
+pre-registered forward start without treating the intentional boundary as a
+data gap. Later publications may be cumulative: candles before the forward
+start are ignored, previously processed forward candles must reproduce their
+stored OHLC values exactly, and only the contiguous unseen suffix advances the
+session.
+
+The registration, daily snapshot, and final assessment manifests are written
+append-only under `analytics/paper_pilots/v1/{pilots,snapshots,assessments}`.
+Validate any publication independently:
+
+```powershell
+validate-paper-pilot snapshot --manifest <manifest-uri> --manifest-sha256 <digest>
+validate-paper-pilot assessment --manifest <manifest-uri> --manifest-sha256 <digest>
+```
+
+The finalizer has no threshold flags. It rejects an early request unless a
+definitive safety failure already exists, recomputes metrics from PostgreSQL,
+verifies every recorded candle and snapshot digest, stops the paper session,
+and makes the pilot terminal. A pass means only
+`eligible_for_execution_design_review`; it never enables live execution.
+
+Recommended operational walkthrough:
+
+1. Start and health-check Kafka, MinIO, PostgreSQL, the collector, and raw sink.
+2. Publish and validate fresh curated trades and one-minute Coinbase candles.
+3. Validate the sealed OOS evaluation and register the plan before its start.
+4. Run two distinct bounded cycles, retry one command ID, and compare row counts.
+5. Restart the CLI process, run another cycle, and inspect checkpoint continuity.
+6. Use `set-paper-session-state` for an audited planned pause and resume.
+7. Publish and independently validate one snapshot per UTC day.
+8. Finalize only at the precommitted end or after a definitive safety failure.
+
+Accelerated fixtures validate all mechanics and verdicts. They do not count as
+real forward evidence. The operational milestone remains open until an actual
+pilot completes its precommitted observation window.
+
+Additional configuration:
+
+```text
+PAPER_PILOT_OUTPUT_PREFIX
+PAPER_PILOT_MAXIMUM_PLAN_CANDLES
+PAPER_PILOT_MAXIMUM_PLAN_FILLS
+```

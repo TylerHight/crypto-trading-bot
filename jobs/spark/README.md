@@ -25,7 +25,11 @@ changing source data or Spark checkpoints.
 `transforms/raw_integrity.py` contains the reusable DataFrame comparisons and
 strict event-value validation. Run the local audit through
 `scripts/run_raw_integrity_audit.ps1`; the final `AUDIT_REPORT_JSON=` line is the
-machine-readable report.
+machine-readable report. Pass `-ReportOutput` with a unique `s3a://` URI to
+publish the same report as append-only evidence for a curated snapshot. The URI
+must be a credential-free object beneath `RAW_AUDIT_REPORT_PREFIX` (default
+`s3a://crypto-data/reconciliation/raw-integrity`); existing objects are never
+overwritten.
 
 ## Curated market trades v1
 

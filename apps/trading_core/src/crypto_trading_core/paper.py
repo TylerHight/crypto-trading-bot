@@ -141,6 +141,8 @@ def _sealed_spec_and_warmup(
     store: ObjectStorage,
     validator: EvaluationValidator,
     range_loader: RangeLoader,
+    pilot_id: str | None = None,
+    forward_start: datetime | None = None,
 ) -> tuple[PaperSessionSpec, tuple[Candle, ...]]:
     _manifest_location(
         evaluation_manifest_uri,
@@ -262,6 +264,8 @@ def _sealed_spec_and_warmup(
         strategy_version=STRATEGY_VERSION,
         backtest_engine_version=BACKTEST_ENGINE_VERSION,
         experiment_engine_version=str(evaluation.get("experiment_engine_version")),
+        pilot_id=pilot_id,
+        forward_start=forward_start,
     )
     return paper_spec, warmup
 
@@ -281,6 +285,8 @@ def create_paper_session(
     range_loader: RangeLoader = load_candle_range,
     command_id: str | None = None,
     now: datetime | None = None,
+    pilot_id: str | None = None,
+    forward_start: datetime | None = None,
 ) -> dict[str, Any]:
     storage = store or ObjectStorage(settings.experiment.backtest.storage)
     spec, warmup = _sealed_spec_and_warmup(
@@ -294,6 +300,8 @@ def create_paper_session(
         store=storage,
         validator=validator,
         range_loader=range_loader,
+        pilot_id=pilot_id,
+        forward_start=forward_start,
     )
     timestamp = (now or datetime.now(UTC)).astimezone(UTC)
     try:
@@ -350,11 +358,20 @@ def _bounds(source: PublishedCandleSnapshot) -> tuple[datetime, datetime]:
         raise InvalidPaperTrading(str(error)) from error
 
 
-def _same_candle(stored: StoredPaperCandle, candle: Candle, source: PaperCandleInput) -> bool:
-    return (
+def _same_candle(
+    stored: StoredPaperCandle,
+    candle: Candle,
+    source: PaperCandleInput,
+    *,
+    allow_cumulative_overlap: bool,
+) -> bool:
+    same_source = (
         stored.manifest_uri == source.manifest_uri
         and stored.manifest_sha256 == source.manifest_sha256
         and stored.snapshot_key == source.snapshot_key
+    )
+    return (
+        (allow_cumulative_overlap or same_source)
         and stored.open == decimal38(candle.open, "open", positive=True)
         and stored.high == decimal38(candle.high, "high", positive=True)
         and stored.low == decimal38(candle.low, "low", positive=True)
@@ -446,6 +463,7 @@ def compute_paper_mutation(
     source: PaperCandleInput,
     *,
     now: datetime,
+    allow_cumulative_overlap: bool = False,
 ) -> PaperMutation:
     if session.state is not PaperSessionState.ACTIVE:
         raise InvalidPaperTrading(f"paper session is {session.state.value}")
@@ -459,7 +477,7 @@ def compute_paper_mutation(
                 now=now,
                 discovered=discovered,
             )
-        if candle.window_start < session.spec.test_end:
+        if candle.window_start < session.spec.processing_start:
             return _pause_mutation(
                 session,
                 reason="candle_precedes_paper_boundary",
@@ -478,7 +496,12 @@ def compute_paper_mutation(
         stored = existing.get(candle.window_start)
         if stored is None:
             unseen.append(candle)
-        elif _same_candle(stored, candle, source):
+        elif _same_candle(
+            stored,
+            candle,
+            source,
+            allow_cumulative_overlap=allow_cumulative_overlap,
+        ):
             already += 1
         else:
             return _pause_mutation(
@@ -488,7 +511,7 @@ def compute_paper_mutation(
                 discovered=discovered,
             )
     expected_start = (
-        session.spec.test_end
+        session.spec.processing_start
         if session.last_candle_time is None
         else session.last_candle_time + timedelta(minutes=1)
     )
@@ -496,7 +519,11 @@ def compute_paper_mutation(
         return _pause_mutation(
             session, reason="candle_sequence_gap", now=now, discovered=discovered
         )
-    if any(candle.window_start <= (session.last_candle_time or session.spec.test_end - timedelta(minutes=1)) for candle in unseen):
+    if any(
+        candle.window_start
+        <= (session.last_candle_time or session.spec.processing_start - timedelta(minutes=1))
+        for candle in unseen
+    ):
         return _pause_mutation(
             session, reason="candle_time_moved_backward", now=now, discovered=discovered
         )
@@ -658,11 +685,19 @@ def process_paper_candles(
     ).startswith(normalize_uri(settings.experiment.backtest.source_output_prefix) + "/"):
         raise InvalidPaperTrading("paper candle output is outside the allowed prefix")
     minimum, maximum = _bounds(snapshot)
-    if minimum < session.spec.test_end:
+    processing_start = session.spec.processing_start
+    is_pilot = session.spec.forward_start is not None
+    needs_forward_warmup = is_pilot and session.last_candle_time is None
+    if minimum < processing_start and not is_pilot:
         raise InvalidPaperTrading("paper candle publication overlaps the evaluation interval")
-    if maximum <= minimum:
+    load_start = max(minimum, processing_start) if is_pilot else minimum
+    if maximum <= load_start:
         raise InvalidPaperTrading("paper candle publication is empty")
-    expected = int((maximum - minimum) / timedelta(minutes=1))
+    warmup_count = session.spec.slow_period - 1 if needs_forward_warmup else 0
+    if needs_forward_warmup and minimum > load_start - timedelta(minutes=warmup_count):
+        raise InvalidPaperTrading("paper candle publication does not cover forward warm-up")
+    expected_forward = int((maximum - load_start) / timedelta(minutes=1))
+    expected = warmup_count + expected_forward
     if expected > settings.maximum_candles_per_run:
         raise InvalidPaperTrading("paper candle publication exceeds the configured cap")
     try:
@@ -670,15 +705,34 @@ def process_paper_candles(
             snapshot,
             exchange=session.spec.exchange,
             symbol=session.spec.symbol,
-            start=minimum,
+            start=load_start,
             end=maximum,
-            warmup_candles=0,
+            warmup_candles=warmup_count,
             storage_settings=settings.experiment.backtest.storage,
             maximum_input_candles=settings.maximum_candles_per_run,
         )
     except (InvalidBacktestInput, InvalidBacktest, OSError, ValueError) as error:
         raise InvalidPaperTrading(f"paper candles could not be loaded: {error}") from error
-    incomplete_publication = len(candles) != expected
+    warmup = tuple(candle for candle in candles if candle.window_start < load_start)
+    forward_candles = tuple(candle for candle in candles if candle.window_start >= load_start)
+    warmup_valid = (
+        not needs_forward_warmup
+        or (
+            len(warmup) == warmup_count
+            and all(
+                candle.exchange == session.spec.exchange
+                and candle.symbol == session.spec.symbol
+                and candle.window_start
+                == load_start - timedelta(minutes=warmup_count - index)
+                for index, candle in enumerate(warmup)
+            )
+        )
+    )
+    incomplete_publication = (
+        len(candles) != expected
+        or len(forward_candles) != expected_forward
+        or not warmup_valid
+    )
     actual_command = validate_command_id(command_id or str(uuid4()))
     source = PaperCandleInput(
         manifest_uri=candle_manifest_uri,
@@ -701,12 +755,36 @@ def process_paper_candles(
             current,
             reason="candle_sequence_gap",
             now=timestamp,
-            discovered=len(candles),
+            discovered=len(forward_candles),
         )
     else:
-        mutator = lambda current, existing: compute_paper_mutation(
-            current, existing, candles, source, now=timestamp
-        )
+        def mutator(
+            current: PaperSession,
+            existing: Mapping[object, StoredPaperCandle],
+        ) -> PaperMutation:
+            if needs_forward_warmup and current.last_candle_time is None:
+                try:
+                    strategy_state = initialize_incremental_backtest(
+                        warmup,
+                        starting_cash=current.spec.starting_cash,
+                        slow_period=current.spec.slow_period,
+                    )
+                except InvalidBacktest:
+                    return _pause_mutation(
+                        current,
+                        reason="candle_sequence_gap",
+                        now=timestamp,
+                        discovered=len(forward_candles),
+                    )
+                current = replace(current, strategy_state=strategy_state)
+            return compute_paper_mutation(
+                current,
+                existing,
+                forward_candles,
+                source,
+                now=timestamp,
+                allow_cumulative_overlap=is_pilot,
+            )
     return repository.execute(
         session_id,
         command_id=actual_command,

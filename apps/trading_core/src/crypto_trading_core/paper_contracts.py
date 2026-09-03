@@ -104,6 +104,8 @@ class PaperSessionSpec:
     experiment_engine_version: str
     paper_engine_version: str = PAPER_ENGINE_VERSION
     paper_schema_version: str = PAPER_SCHEMA_VERSION
+    pilot_id: str | None = None
+    forward_start: datetime | None = None
 
     def __post_init__(self) -> None:
         for digest, field in (
@@ -130,6 +132,10 @@ class PaperSessionSpec:
         if drawdown <= 0 or drawdown > 1:
             raise InvalidPaperTrading("maximum_drawdown must be in (0, 1]")
         utc_minute(self.test_end, "test_end")
+        if self.forward_start is not None:
+            utc_minute(self.forward_start, "forward_start")
+            if self.forward_start < self.test_end:
+                raise InvalidPaperTrading("forward_start cannot precede test_end")
         if not ACTOR_PATTERN.fullmatch(self.approved_by):
             raise InvalidPaperTrading("approved_by has an invalid format")
         if not self.approval_note.strip() or len(self.approval_note) > 1000:
@@ -141,9 +147,11 @@ class PaperSessionSpec:
         ):
             if not uri.strip():
                 raise InvalidPaperTrading(f"{field} is empty")
+        if self.pilot_id is not None and not SESSION_ID_PATTERN.fullmatch(self.pilot_id):
+            raise InvalidPaperTrading("pilot ID is invalid")
 
     def identity(self) -> dict[str, Any]:
-        return {
+        identity: dict[str, Any] = {
             "approval_note": self.approval_note.strip(),
             "approved_by": self.approved_by,
             "backtest_engine_version": self.backtest_engine_version,
@@ -155,6 +163,17 @@ class PaperSessionSpec:
             "starting_cash": format(self.starting_cash.normalize(), "f"),
             "strategy_version": self.strategy_version,
         }
+        if self.pilot_id is not None:
+            identity["pilot_id"] = self.pilot_id
+        if self.forward_start is not None:
+            identity["forward_start"] = self.forward_start
+        return identity
+
+    @property
+    def processing_start(self) -> datetime:
+        """First candle that contributes to the forward paper result."""
+
+        return self.forward_start or self.test_end
 
     @property
     def session_id(self) -> str:

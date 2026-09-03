@@ -90,6 +90,7 @@ class RawAuditSettings:
     s3_endpoint: str
     s3_access_key: str
     s3_secret_key: str
+    report_prefix: str
     sample_limit: int
 
     @classmethod
@@ -103,6 +104,14 @@ class RawAuditSettings:
 
         if not input_path.startswith("s3a://"):
             raise ValueError("RAW_AUDIT_INPUT_PATH must use the s3a:// scheme")
+
+        report_prefix = _required(
+            source,
+            "RAW_AUDIT_REPORT_PREFIX",
+            "s3a://crypto-data/reconciliation/raw-integrity",
+        ).rstrip("/")
+        if not report_prefix.startswith("s3a://"):
+            raise ValueError("RAW_AUDIT_REPORT_PREFIX must use the s3a:// scheme")
 
         return cls(
             kafka_bootstrap_servers=_required(
@@ -131,6 +140,7 @@ class RawAuditSettings:
                 "RAW_AUDIT_S3_SECRET_KEY",
                 "minioadmin",
             ),
+            report_prefix=report_prefix,
             sample_limit=_positive_int(
                 source,
                 "RAW_AUDIT_SAMPLE_LIMIT",

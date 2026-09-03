@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 from datetime import datetime, timezone
 
 import pytest
@@ -10,7 +12,9 @@ from pyspark.sql import types as T
 
 from jobs.spark.entrypoints.audit_raw_market_trades import (
     KafkaPartitionBound,
+    build_parser,
     kafka_batch_options,
+    validate_report_output,
 )
 from jobs.spark.transforms.raw_integrity import (
     build_integrity_report,
@@ -74,11 +78,14 @@ PARTITION_BOUND_SCHEMA = T.StructType(
 
 @pytest.fixture(scope="module")
 def spark() -> SparkSession:
+    os.environ["PYSPARK_PYTHON"] = sys.executable
+    os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
     session = (
         SparkSession.builder.master("local[1]")
         .appName("raw-integrity-unit-tests")
         .config("spark.ui.enabled", "false")
         .config("spark.sql.shuffle.partitions", "1")
+        .config("spark.executorEnv.PYSPARK_PYTHON", sys.executable)
         .getOrCreate()
     )
     session.sparkContext.setLogLevel("ERROR")
@@ -352,3 +359,48 @@ def test_captured_bounds_are_encoded_as_explicit_kafka_options() -> None:
     assert json.loads(options["endingOffsets"]) == {
         "market.trades.raw.v1": {"0": 10, "1": 13}
     }
+
+
+def test_report_output_is_optional_and_explicit() -> None:
+    assert build_parser().parse_args([]).report_output is None
+    assert (
+        build_parser()
+        .parse_args(["--report-output", "s3a://bucket/evidence/audit.json"])
+        .report_output
+        == "s3a://bucket/evidence/audit.json"
+    )
+
+
+def test_report_output_must_be_nested_under_configured_prefix() -> None:
+    uri = "s3a://crypto-data/reconciliation/raw-integrity/audit.json"
+
+    assert (
+        validate_report_output(
+            uri,
+            "s3a://crypto-data/reconciliation/raw-integrity",
+        )
+        == uri
+    )
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "file:///tmp/audit.json",
+        "s3a://crypto-data/raw/audit.json",
+        "s3a://crypto-data/reconciliation/raw-integrity",
+        "s3a://crypto-data/reconciliation/raw-integrity-unsafe/audit.json",
+        "s3a://user:secret@crypto-data/reconciliation/raw-integrity/audit.json",
+        "s3a://crypto-data/reconciliation/raw-integrity/audit.json?secret=value",
+        "s3a://crypto-data/reconciliation/raw-integrity/../audit.json",
+        "s3a://crypto-data/reconciliation/raw-integrity/%2e%2e/audit.json",
+    ],
+)
+def test_report_output_rejects_unsafe_or_out_of_prefix_uris(uri: str) -> None:
+    with pytest.raises(ValueError) as error:
+        validate_report_output(
+            uri,
+            "s3a://crypto-data/reconciliation/raw-integrity",
+        )
+
+    assert "secret" not in str(error.value)

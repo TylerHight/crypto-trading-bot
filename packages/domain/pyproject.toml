@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "crypto-trading-domain"
 version = "0.1.0"
 description = "Exchange-neutral canonical crypto trading domain models"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = ["pydantic>=2,<3"]
 
 [tool.hatch.build.targets.wheel]

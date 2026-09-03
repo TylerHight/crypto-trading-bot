@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading.local/schemas/pilot-plan-v1.json",
+  "title": "Paper-trading pilot plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pilot_plan_version", "name", "evaluation_manifest_uri",
+    "evaluation_manifest_sha256", "start_not_before", "minimum_calendar_days",
+    "minimum_processed_candles", "minimum_fills", "maximum_drawdown",
+    "minimum_excess_return_over_buy_and_hold", "maximum_data_gap_events",
+    "maximum_conflict_events", "maximum_unplanned_pauses"
+  ],
+  "properties": {
+    "pilot_plan_version": {"const": "v1"},
+    "name": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"},
+    "evaluation_manifest_uri": {"type": "string", "minLength": 1},
+    "evaluation_manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "start_not_before": {"type": "string", "format": "date-time"},
+    "minimum_calendar_days": {"type": "integer", "minimum": 7, "maximum": 90},
+    "minimum_processed_candles": {"type": "integer", "minimum": 1},
+    "minimum_fills": {"type": "integer", "minimum": 0},
+    "maximum_drawdown": {"type": "string", "pattern": "^(?:0?\\.(?:[0-9]*[1-9][0-9]*)|1(?:\\.0+)?)$"},
+    "minimum_excess_return_over_buy_and_hold": {"type": "string"},
+    "maximum_data_gap_events": {"type": "integer", "minimum": 0},
+    "maximum_conflict_events": {"type": "integer", "minimum": 0},
+    "maximum_unplanned_pauses": {"type": "integer", "minimum": 0}
+  }
+}

@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "crypto-exchange-adapters"
 version = "0.1.0"
 description = "Exchange-specific clients and payload normalizers"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "websockets>=14,<16",
 ]

@@ -1,8 +1,10 @@
+import argparse
 import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
@@ -10,6 +12,7 @@ from pyspark.storagelevel import StorageLevel
 
 from jobs.spark.config import RawAuditSettings
 from jobs.spark.entrypoints.raw_market_trades import configure_s3a
+from jobs.spark.object_storage import HadoopObjectStore
 from jobs.spark.transforms.raw_integrity import (
     build_integrity_report,
     select_kafka_audit_records,
@@ -26,6 +29,58 @@ PARTITION_BOUND_SCHEMA = T.StructType(
         T.StructField("ending_offset_exclusive", T.LongType(), nullable=False),
     ]
 )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Audit a fixed Kafka range against immutable raw Parquet."
+    )
+    parser.add_argument(
+        "--report-output",
+        help=(
+            "Optional append-only JSON evidence URI. Use an s3a:// URI beneath "
+            "the curation evidence prefix when the report will feed curation."
+        ),
+    )
+    return parser
+
+
+def validate_report_output(uri: str, allowed_prefix: str) -> str:
+    """Require a credential-free S3A object below the evidence prefix."""
+
+    parsed = urlsplit(uri)
+    prefix = urlsplit(allowed_prefix)
+    invalid = (
+        parsed.scheme != "s3a"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or prefix.scheme != "s3a"
+        or not prefix.netloc
+        or prefix.username is not None
+        or prefix.password is not None
+        or prefix.query
+        or prefix.fragment
+        or parsed.netloc != prefix.netloc
+    )
+    decoded_path = unquote(parsed.path)
+    decoded_prefix_path = unquote(prefix.path).rstrip("/")
+    path_segments = decoded_path.split("/")
+    if (
+        invalid
+        or not decoded_prefix_path
+        or any(segment in {".", ".."} for segment in path_segments)
+        or decoded_path == decoded_prefix_path
+        or not decoded_path.startswith(decoded_prefix_path + "/")
+        or decoded_path.endswith("/")
+    ):
+        raise ValueError(
+            "report output must be a credential-free s3a:// JSON object beneath "
+            "RAW_AUDIT_REPORT_PREFIX"
+        )
+    return uri
 
 
 @dataclass(frozen=True)
@@ -192,7 +247,13 @@ def main() -> None:
     """Run the bounded, read-only Kafka-to-Parquet integrity audit."""
 
     logging.basicConfig(level=logging.INFO)
+    arguments = build_parser().parse_args()
     settings = RawAuditSettings.from_env()
+    report_output = (
+        validate_report_output(arguments.report_output, settings.report_prefix)
+        if arguments.report_output
+        else None
+    )
     started_at = datetime.now(timezone.utc)
     spark = (
         SparkSession.builder.appName("audit-raw-market-trades")
@@ -240,6 +301,12 @@ def main() -> None:
             settings.sample_limit,
             started_at,
         )
+        if report_output:
+            report["report_uri"] = report_output
+            HadoopObjectStore(spark).write_json_append_only(
+                report_output,
+                report,
+            )
         print_human_summary(report)
         print(
             "AUDIT_REPORT_JSON="

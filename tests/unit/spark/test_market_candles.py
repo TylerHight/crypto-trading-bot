@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sys
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -21,12 +22,6 @@ from jobs.spark.transforms.market_candles import (
 
 CREATED_AT = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
 SNAPSHOT_KEY = "a" * 64
-WINDOWS_PYSPARK_WORKER_UNSUPPORTED = pytest.mark.skipif(
-    sys.platform == "win32" and sys.version_info >= (3, 13),
-    reason="Spark 3.5's Python worker is incompatible with Windows Python 3.13",
-)
-
-
 def manifest_bytes(**changes) -> bytes:
     value = {
         "status": "published",
@@ -172,20 +167,26 @@ def curated_row(
 @pytest.fixture(scope="module")
 def spark():
     pyspark = pytest.importorskip("pyspark")
+    previous_python = os.environ.get("PYSPARK_PYTHON")
+    os.environ["PYSPARK_PYTHON"] = sys.executable
     session = (
         pyspark.sql.SparkSession.builder.master("local[1]")
         .appName("market-candle-unit-tests")
         .config("spark.ui.enabled", "false")
         .config("spark.sql.shuffle.partitions", "1")
         .config("spark.sql.session.timeZone", "UTC")
+        .config("spark.executorEnv.PYSPARK_PYTHON", sys.executable)
         .getOrCreate()
     )
     session.sparkContext.setLogLevel("ERROR")
     yield session
     session.stop()
+    if previous_python is None:
+        os.environ.pop("PYSPARK_PYTHON", None)
+    else:
+        os.environ["PYSPARK_PYTHON"] = previous_python
 
 
-@WINDOWS_PYSPARK_WORKER_UNSUPPORTED
 def test_one_trade_produces_one_flat_candle(spark) -> None:
     row = curated_row(
         symbol="BTC-USD",
@@ -209,7 +210,6 @@ def test_one_trade_produces_one_flat_candle(spark) -> None:
     assert candle["trade_count"] == 1
 
 
-@WINDOWS_PYSPARK_WORKER_UNSUPPORTED
 def test_candles_use_event_time_and_deterministic_kafka_tie_breaker(spark) -> None:
     shared_time = datetime(2026, 8, 25, 14, 0, 10, tzinfo=UTC)
     rows = [

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-trading.local/schemas/pilot-assessment-v1.json",
+  "title": "Paper-trading pilot assessment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assessment_policy_version", "criteria", "eligibility", "execution_mode",
+    "finalized_at", "live_trading_enabled", "metrics", "operator", "pilot_id",
+    "session_id", "terminal_stop", "verdict"
+  ],
+  "properties": {
+    "assessment_policy_version": {"const": "paper-pilot-assessment-v1"},
+    "criteria": {"type": "object"},
+    "eligibility": {"enum": ["eligible_for_execution_design_review", "not_eligible"]},
+    "execution_mode": {"const": "paper_simulation"},
+    "finalized_at": {"type": "string", "format": "date-time"},
+    "live_trading_enabled": {"const": false},
+    "metrics": {"type": "object"},
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["note", "reviewed_by"],
+      "properties": {
+        "note": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "reviewed_by": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "pilot_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "session_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "terminal_stop": {"type": "boolean"},
+    "verdict": {"enum": ["pass", "fail", "inconclusive"]}
+  }
+}

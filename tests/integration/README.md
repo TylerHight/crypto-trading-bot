@@ -59,6 +59,20 @@ Remove-Item Env:RUN_PAPER_INTEGRATION_TESTS
 podman compose stop postgres
 ```
 
+The paper-pilot integration test combines PostgreSQL and MinIO. It covers
+registration persistence, concurrent cycle serialization, restart recovery,
+exact retry, immutable snapshot publication and validation, terminal
+assessment, and prevention of post-finalization processing:
+
+```powershell
+podman compose up -d postgres minio minio-init
+$env:RUN_PILOT_INTEGRATION_TESTS = "1"
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests\integration\test_paper_pilot_postgres_minio.py
+Remove-Item Env:RUN_PILOT_INTEGRATION_TESTS
+podman compose stop postgres minio
+```
+
 The strategy-experiment integration test runs the two-stage research workflow
 through MinIO. It proves the sealed selection contains train/validation rows but
 no test metrics, evaluates the immutable winner against buy-and-hold on the OOS

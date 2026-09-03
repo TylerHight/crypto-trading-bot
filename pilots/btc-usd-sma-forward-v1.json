@@ -1,0 +1,15 @@
+{
+  "evaluation_manifest_sha256": "2a560696c84c3400aecb91e753ecfcc8d7edc0ebebc2737ac1b47c664373981b",
+  "evaluation_manifest_uri": "s3a://crypto-data/analytics/strategy_experiments/v1/evaluations/7df817802559c2ac7f3fbd92aae7f1db2fce4609f23b9a0cdf8029d8db36eb16/manifest.json",
+  "maximum_conflict_events": 0,
+  "maximum_data_gap_events": 0,
+  "maximum_drawdown": "0.200000000000000000",
+  "maximum_unplanned_pauses": 0,
+  "minimum_calendar_days": 30,
+  "minimum_excess_return_over_buy_and_hold": "0.000000000000000000",
+  "minimum_fills": 10,
+  "minimum_processed_candles": 40000,
+  "name": "btc-usd-sma-forward-v1",
+  "pilot_plan_version": "v1",
+  "start_not_before": "2026-09-07T00:00:00Z"
+}

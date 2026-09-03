@@ -1,6 +1,7 @@
+import asyncio
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import crypto_exchange_adapters.coinbase as coinbase_module
 import pytest
@@ -212,6 +213,31 @@ class SilentFakeWebSocket(FakeWebSocket):
         raise TimeoutError
 
 
+class SummaryGatedWebSocket(FakeWebSocket):
+    """Release a trade only after the requested number of health summaries."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self._release_trade = asyncio.Event()
+        self._iterator = self._message_stream()
+        self.receive_cancelled = False
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self._iterator
+
+    async def _message_stream(self) -> AsyncIterator[str]:
+        yield json.dumps(heartbeat_message(sequence=0, counter=100))
+        try:
+            await self._release_trade.wait()
+        except asyncio.CancelledError:
+            self.receive_cancelled = True
+            raise
+        yield json.dumps(market_trade_message(sequence=1, trade_id="after-summary"))
+
+    def release_trade(self) -> None:
+        self._release_trade.set()
+
+
 def heartbeat_message(sequence: int, counter: int) -> dict[str, object]:
     return {
         "channel": "heartbeats",
@@ -314,6 +340,58 @@ async def test_periodic_summary_reports_increasing_counters(
     assert [summary.heartbeats_observed for summary in summaries] == [2, 3]
     assert summaries[-1].last_envelope_sequence == 2
     assert summaries[-1].last_heartbeat_counter == 102
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summaries_before_trade", [1, 3])
+async def test_pending_receive_survives_periodic_summary_deadlines(
+    monkeypatch: pytest.MonkeyPatch,
+    summaries_before_trade: int,
+) -> None:
+    websocket = SummaryGatedWebSocket()
+    connection_attempts = 0
+
+    def fake_connect(*_args: object, **_kwargs: object) -> FakeConnection:
+        nonlocal connection_attempts
+        connection_attempts += 1
+        if connection_attempts > 1:
+            raise AssertionError("summary deadline forced an unexpected reconnect")
+        return FakeConnection(websocket)
+
+    monkeypatch.setattr(coinbase_module, "connect", fake_connect)
+    observations: list[FeedQualityObservation] = []
+
+    def record_observation(observation: FeedQualityObservation) -> None:
+        observations.append(observation)
+        summaries = sum(
+            event.observation_type == "health_summary" for event in observations
+        )
+        if summaries == summaries_before_trade:
+            websocket.release_trade()
+
+    client = CoinbasePublicTradeClient(
+        websocket_url="wss://example.invalid",
+        symbols=["BTC-USD"],
+        reconnect_initial_seconds=0,
+        reconnect_max_seconds=0,
+        heartbeat_timeout_seconds=1,
+        health_summary_interval_seconds=0.01,
+        observation_callback=record_observation,
+    )
+    trade_stream = client.trades()
+
+    try:
+        trade = await asyncio.wait_for(anext(trade_stream), timeout=1)
+    finally:
+        await trade_stream.aclose()
+
+    summaries = [
+        event for event in observations if event.observation_type == "health_summary"
+    ]
+    assert trade.source_event_id == "after-summary"
+    assert len(summaries) >= summaries_before_trade
+    assert connection_attempts == 1
+    assert not websocket.receive_cancelled
 
 
 @pytest.mark.asyncio

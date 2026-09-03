@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -27,6 +28,8 @@ from crypto_trading_core.paper_contracts import (
 from crypto_trading_core.paper_repository import (
     MemoryPaperRepository,
     PostgresPaperRepository,
+    _spec_document,
+    _spec_from_document,
 )
 from crypto_trading_core.storage import StorageSettings
 from crypto_trading_domain.backtest import Candle, initialize_incremental_backtest
@@ -146,6 +149,33 @@ def test_session_identity_is_stable_and_pins_approval_and_safety_limit() -> None
         }
     )
     assert first.session_id != changed.session_id
+    forward = PaperSessionSpec(
+        **{
+            **first.__dict__,
+            "forward_start": START + timedelta(minutes=10),
+        }
+    )
+    assert first.session_id != forward.session_id
+    assert forward.processing_start == START + timedelta(minutes=10)
+
+    with pytest.raises(InvalidPaperTrading, match="cannot precede"):
+        PaperSessionSpec(
+            **{
+                **first.__dict__,
+                "forward_start": START - timedelta(minutes=1),
+            }
+        )
+
+
+def test_persisted_standalone_spec_without_forward_start_remains_compatible() -> None:
+    document = _spec_document(_spec())
+    document.pop("forward_start")
+
+    restored = _spec_from_document(document)
+
+    assert restored.forward_start is None
+    assert restored.processing_start == restored.test_end
+    assert restored.session_id == _spec().session_id
 
 
 def test_create_session_recovers_only_sealed_parameters_and_checks_digest(tmp_path) -> None:
@@ -572,4 +602,175 @@ def test_bounded_publication_loading_and_missing_minute_auto_pause(tmp_path) -> 
     )
     assert paused["status"] == "auto_paused"
     assert paused["pause_reason"] == "candle_sequence_gap"
+    assert repository.get_session(session.session_id).processed_candles == 0
+
+
+def test_delayed_forward_start_uses_fresh_warmup_and_counts_only_forward_candles(
+    tmp_path,
+) -> None:
+    forward_start = START + timedelta(minutes=10)
+    base_spec = _spec()
+    spec = PaperSessionSpec(**{**base_spec.__dict__, "forward_start": forward_start})
+    stale_warmup = (_candle(-1, "10", "10"),)
+    session = PaperSession(
+        spec=spec,
+        state=PaperSessionState.ACTIVE,
+        strategy_state=initialize_incremental_backtest(
+            stale_warmup,
+            starting_cash=spec.starting_cash,
+            slow_period=spec.slow_period,
+        ),
+        created_at=START,
+        updated_at=START,
+        last_state_changed_at=START,
+    )
+    repository = MemoryPaperRepository()
+    _create(repository, session)
+
+    body = json.dumps(
+        {
+            "candle_count": 3,
+            "candle_output_uri": str(tmp_path / "paper-candles" / "runs" / "forward"),
+            "candle_schema_version": "v1",
+            "interval": "1m",
+            "mode": "apply",
+            "snapshot_key": "7" * 64,
+            "source_curated_snapshot_key": "8" * 64,
+            "status": "published",
+            "window_time_bounds": {
+                "maximum": "2026-02-01T00:12:00Z",
+                "minimum": "2026-02-01T00:09:00Z",
+            },
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    manifest = tmp_path / "forward-manifest.json"
+    manifest.write_bytes(body)
+    digest = hashlib.sha256(body).hexdigest()
+
+    experiment = ExperimentSettings(
+        backtest=BacktestSettings(
+            storage=StorageSettings(),
+            source_manifest_prefix=str(tmp_path),
+            source_output_prefix=str(tmp_path),
+            output_prefix=str(tmp_path / "backtests"),
+            maximum_input_candles=100,
+        ),
+        spec_prefix=str(tmp_path),
+        output_prefix=str(tmp_path),
+        maximum_candidates=50,
+        maximum_candidate_candle_evaluations=1000,
+    )
+    settings = PaperSettings(
+        experiment=experiment,
+        database_url="unused",
+        candle_manifest_prefix=str(tmp_path),
+        evaluation_manifest_prefix=str(tmp_path),
+        maximum_candles_per_run=100,
+        transaction_timeout_seconds=10,
+    )
+    loaded = (
+        _candle(9, "50", "50"),
+        _candle(10, "40", "40"),
+        _candle(11, "39", "39"),
+    )
+
+    def loader(*args, **kwargs):
+        assert kwargs["start"] == forward_start
+        assert kwargs["end"] == forward_start + timedelta(minutes=2)
+        assert kwargs["warmup_candles"] == 1
+        return loaded
+
+    report = process_paper_candles(
+        session.session_id,
+        str(manifest),
+        digest,
+        settings=settings,
+        repository=repository,
+        local_development=True,
+        range_loader=loader,
+        command_id="delayed-forward-publication",
+        now=forward_start + timedelta(minutes=2),
+    )
+
+    stored = repository.get_session(session.session_id)
+    assert report["newly_processed"] == 2
+    assert report["discovered"] == 2
+    assert stored.first_candle_time == forward_start
+    assert stored.last_candle_time == forward_start + timedelta(minutes=1)
+    assert stored.processed_candles == 2
+    assert repository.candles[session.session_id].keys() == {
+        forward_start,
+        forward_start + timedelta(minutes=1),
+    }
+    assert repository.decisions[session.session_id] == []
+
+
+def test_delayed_forward_start_missing_warmup_pauses_without_processing(tmp_path) -> None:
+    forward_start = START + timedelta(minutes=10)
+    base = _session()
+    spec = PaperSessionSpec(**{**base.spec.__dict__, "forward_start": forward_start})
+    session = replace(base, spec=spec)
+    repository = MemoryPaperRepository()
+    _create(repository, session)
+    body = json.dumps(
+        {
+            "candle_count": 2,
+            "candle_output_uri": str(tmp_path / "paper-candles" / "runs" / "missing"),
+            "candle_schema_version": "v1",
+            "interval": "1m",
+            "mode": "apply",
+            "snapshot_key": "6" * 64,
+            "source_curated_snapshot_key": "8" * 64,
+            "status": "published",
+            "window_time_bounds": {
+                "maximum": "2026-02-01T00:12:00Z",
+                "minimum": "2026-02-01T00:09:00Z",
+            },
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    manifest = tmp_path / "missing-warmup-manifest.json"
+    manifest.write_bytes(body)
+    digest = hashlib.sha256(body).hexdigest()
+    settings = PaperSettings(
+        experiment=ExperimentSettings(
+            backtest=BacktestSettings(
+                storage=StorageSettings(),
+                source_manifest_prefix=str(tmp_path),
+                source_output_prefix=str(tmp_path),
+                output_prefix=str(tmp_path / "backtests"),
+                maximum_input_candles=100,
+            ),
+            spec_prefix=str(tmp_path),
+            output_prefix=str(tmp_path),
+            maximum_candidates=50,
+            maximum_candidate_candle_evaluations=1000,
+        ),
+        database_url="unused",
+        candle_manifest_prefix=str(tmp_path),
+        evaluation_manifest_prefix=str(tmp_path),
+        maximum_candles_per_run=100,
+        transaction_timeout_seconds=10,
+    )
+
+    report = process_paper_candles(
+        session.session_id,
+        str(manifest),
+        digest,
+        settings=settings,
+        repository=repository,
+        local_development=True,
+        range_loader=lambda *args, **kwargs: (
+            _candle(10, "40", "40"),
+            _candle(11, "39", "39"),
+        ),
+        command_id="missing-forward-warmup",
+        now=forward_start + timedelta(minutes=2),
+    )
+
+    assert report["status"] == "auto_paused"
+    assert report["pause_reason"] == "candle_sequence_gap"
     assert repository.get_session(session.session_id).processed_candles == 0
