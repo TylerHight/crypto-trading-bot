@@ -102,3 +102,18 @@ $env:RUN_BACKTEST_INTEGRATION_TESTS = "1"
 Remove-Item Env:RUN_BACKTEST_INTEGRATION_TESTS
 podman compose stop minio
 ```
+
+The operator-dashboard integration test creates an isolated MinIO fixture
+prefix, reads it and the existing paper-pilot tables through the dashboard's
+read-only adapters, verifies that the read left fixture-object and database-row
+counts unchanged, then removes only its fixture prefix:
+
+```powershell
+podman compose up -d postgres minio
+$env:PYTHONPATH = "$PWD/apps/operator_dashboard/src"
+$env:RUN_DASHBOARD_INTEGRATION_TESTS = "1"
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests\integration\test_operator_dashboard_postgres_minio.py
+Remove-Item Env:RUN_DASHBOARD_INTEGRATION_TESTS
+podman compose stop postgres minio
+```

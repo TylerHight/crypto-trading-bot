@@ -2,6 +2,7 @@
 members = [
     "apps/collector",
     "apps/historical_backfill",
+    "apps/operator_dashboard",
     "apps/trading_core",
     "packages/domain",
     "packages/exchange_adapters",

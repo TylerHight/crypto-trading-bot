@@ -6,6 +6,7 @@ requires-python = ">=3.11, <3.13"
 members = [
     "crypto-exchange-adapters",
     "crypto-historical-backfill",
+    "crypto-operator-dashboard",
     "crypto-trading-collector",
     "crypto-trading-core",
     "crypto-trading-domain",
@@ -124,6 +125,23 @@ requires-dist = [
     { name = "crypto-exchange-adapters", editable = "packages/exchange_adapters" },
     { name = "crypto-trading-domain", editable = "packages/domain" },
     { name = "pyarrow", specifier = ">=21,<24" },
+]
+
+[[package]]
+name = "crypto-operator-dashboard"
+version = "0.1.0"
+source = { editable = "apps/operator_dashboard" }
+dependencies = [
+    { name = "boto3" },
+    { name = "confluent-kafka" },
+    { name = "psycopg", extra = ["binary"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", specifier = ">=1.40,<2" },
+    { name = "confluent-kafka", specifier = ">=2.3,<4" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
 ]
 
 [[package]]

@@ -37,7 +37,7 @@ matches the declared package support instead of failing to build on Python 3.13.
   `6a1303f375d88fcd389f0414bb5c35acd614d808bcf45b024540045b094e7e8c`.
   Its pilot ID would be
   `247f97da17afa01eec5f94912486ac59b0db66a54e8e4fbd17d6cb4a82bc8230`.
-- The final verification run passed 243 tests with 9 environment-gated tests
+- The final verification run passed 255 tests with 10 environment-gated tests
   skipped, plus Ruff, trading-core mypy, PowerShell parsing, diff checks, and
   the enabled PostgreSQL/MinIO pilot lifecycle integration test.
 - The rebuilt live collector retained one Coinbase connection across nine

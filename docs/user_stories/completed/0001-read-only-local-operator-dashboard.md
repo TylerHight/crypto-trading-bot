@@ -1,9 +1,9 @@
 # US-0001: Read-only local operator dashboard
 
-**Status:** recommended  
-**Priority:** next  
-**Created:** 2026-09-03  
-**Owner:** project operator  
+**Status:** complete
+**Priority:** next
+**Created:** 2026-09-03
+**Owner:** project operator
 **Dependencies:** existing collector health events, raw-integrity reports,
 immutable curation/candle/experiment artifacts, and paper-pilot PostgreSQL
 state.
@@ -100,3 +100,28 @@ answer: “Is data collection healthy?”, “What is the newest trusted dataset
 “What did the strategy’s OOS test show?”, “Is a paper pilot running?”, and
 “What is the next safe action?”—without using a database client or manually
 parsing a manifest.
+
+## Implementation and validation
+
+Implemented as the local `operator-dashboard` application. It serves a
+server-rendered `GET /` view and a normalized `GET /api/status` response on a
+loopback-only address. It reads Kafka collector-health summaries, bounded
+MinIO metadata and manifests, the draft plan, and PostgreSQL pilot state; it
+does not expose endpoints, credentials, connection strings, or raw trades.
+
+The data adapters are intentionally read-only: Kafka auto-commit is disabled,
+object storage uses only list/get operations, and PostgreSQL is queried inside
+an explicit read-only transaction. Mutation HTTP methods return `405` without
+invoking a data read.
+
+Validation completed on 2026-09-04:
+
+- 12 dashboard unit tests passed, including rendered `not registered`, stale,
+  unavailable, formatting, and mutation-route cases.
+- The enabled PostgreSQL/MinIO integration test passed and proved fixture
+  object counts and pilot/session database-row counts were unchanged by reads.
+- The full Python suite passed: 255 passed, 10 environment-gated tests
+  skipped. Dashboard linting and strict package type checking passed.
+- A live local smoke check returned `200` for `GET /`, `405` for `POST
+  /api/status`, current collector/storage/database health, and zero real
+  `paper_pilots` and `paper_sessions` rows before the unregistered pilot.

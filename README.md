@@ -57,6 +57,11 @@ PostgreSQL for durable paper-trading state, and inspection UIs:
 
 See the [local pipeline guide](infra/compose/README.md) for the Compose reference and the [operational runbook](docs/runbooks/local-market-data-pipeline.md) for end-to-end verification, monitoring, and recovery.
 
+For one local, read-only view of pipeline health, trusted data, research, and
+paper-pilot state, run `uv run operator-dashboard`. It binds to
+<http://127.0.0.1:8090> by default and cannot place orders or change project
+state. See the [operator dashboard guide](apps/operator_dashboard/README.md).
+
 ## Repository conventions
 
 - Store no credentials, account identifiers, or private market data in Git.

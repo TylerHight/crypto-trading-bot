@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crypto-operator-dashboard"
+version = "0.1.0"
+description = "Local read-only operator dashboard for the crypto data platform"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "boto3>=1.40,<2",
+    "confluent-kafka>=2.3,<4",
+    "psycopg[binary]>=3.2,<4",
+]
+
+[project.scripts]
+operator-dashboard = "crypto_operator_dashboard.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/crypto_operator_dashboard"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

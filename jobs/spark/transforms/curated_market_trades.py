@@ -13,6 +13,7 @@ from pyspark.sql import DataFrame, Row
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql.window import Window
+from pyspark.storagelevel import StorageLevel
 
 from jobs.spark.schemas.market_trades_v1 import (
     CURATED_MARKET_TRADE_SCHEMA,
@@ -440,7 +441,7 @@ def validate_raw_record(
 
 def _conflict_fields() -> Any:
     fields = [
-        F.when(F.countDistinct(F.col(field)) > 1, F.lit(field))
+        F.when(F.min(F.col(field)) != F.max(F.col(field)), F.lit(field))
         for field in LOGICAL_FIELDS
     ]
     return F.concat_ws(",", F.array_compact(F.array(*fields)))
@@ -463,7 +464,7 @@ def curate_market_trades(
             curated_at=curated_at,
             canonical_topic=canonical_topic,
         )
-    ).cache()
+    ).persist(StorageLevel.DISK_ONLY)
     candidates = spark.createDataFrame(
         validated.filter(lambda item: item.candidate is not None).map(
             lambda item: item.candidate
@@ -479,7 +480,12 @@ def curate_market_trades(
 
     duplicate_groups = candidates.groupBy("event_id").agg(
         F.count(F.lit(1)).alias("deliveries"),
-        F.countDistinct("_logical_fingerprint").alias("logical_variants"),
+        F.when(
+            F.min("_logical_fingerprint") == F.max("_logical_fingerprint"),
+            F.lit(1),
+        )
+        .otherwise(F.lit(2))
+        .alias("logical_variants"),
         _conflict_fields().alias("conflicting_fields"),
     )
     non_conflicting = candidates.join(
