@@ -90,9 +90,11 @@ class ExperimentSpec:
     test: ExperimentRange
     candidates: tuple[Candidate, ...]
     selection_policy: SelectionPolicy
+    gap_policy_uri: str | None = None
+    gap_policy_sha256: str | None = None
 
     def canonical_document(self) -> dict[str, Any]:
-        return {
+        document: dict[str, Any] = {
             "candle_manifest_sha256": self.candle_manifest_sha256,
             "candle_manifest_uri": self.candle_manifest_uri,
             "candidates": [candidate.as_dict() for candidate in self.candidates],
@@ -110,6 +112,10 @@ class ExperimentSpec:
             "starting_cash": _decimal_text(self.starting_cash),
             "symbol": self.symbol,
         }
+        if self.gap_policy_uri is not None:
+            document["gap_policy_uri"] = self.gap_policy_uri
+            document["gap_policy_sha256"] = self.gap_policy_sha256
+        return document
 
     @property
     def canonical_sha256(self) -> str:
@@ -193,9 +199,7 @@ def load_experiment_spec(
         raw = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise InvalidBacktestInput("experiment specification is invalid UTF-8 JSON") from error
-    document = _exact_fields(
-        raw,
-        {
+    required_fields = {
             "experiment_spec_version",
             "name",
             "candle_manifest_uri",
@@ -207,10 +211,14 @@ def load_experiment_spec(
             "slippage_bps",
             "ranges",
             "candidates",
-            "selection_policy",
-        },
-        "experiment specification",
-    )
+        "selection_policy",
+    }
+    optional_gap_policy_fields = {"gap_policy_uri", "gap_policy_sha256"}
+    if not isinstance(raw, dict) or (
+        set(raw) != required_fields and set(raw) != required_fields | optional_gap_policy_fields
+    ):
+        raise InvalidBacktestInput("experiment specification fields do not match experiment spec v1")
+    document = raw
     if document.get("experiment_spec_version") != EXPERIMENT_SPEC_VERSION:
         raise InvalidBacktestInput("unsupported experiment specification version")
     name = document.get("name")
@@ -228,6 +236,19 @@ def load_experiment_spec(
         raise InvalidBacktestInput("experiment exchange has an invalid format")
     if not isinstance(symbol, str) or not SYMBOL_PATTERN.fullmatch(symbol):
         raise InvalidBacktestInput("experiment symbol has an invalid format")
+    gap_policy_uri = document.get("gap_policy_uri")
+    gap_policy_sha256 = document.get("gap_policy_sha256")
+    if (gap_policy_uri is None) != (gap_policy_sha256 is None):
+        raise InvalidBacktestInput("gap policy URI and digest must be supplied together")
+    if gap_policy_uri is not None and (
+        not isinstance(gap_policy_uri, str) or not gap_policy_uri.strip()
+    ):
+        raise InvalidBacktestInput("gap policy URI is invalid")
+    if gap_policy_sha256 is not None and (
+        not isinstance(gap_policy_sha256, str)
+        or not SHA256_PATTERN.fullmatch(gap_policy_sha256)
+    ):
+        raise InvalidBacktestInput("gap policy digest is invalid")
 
     ranges = _exact_fields(document.get("ranges"), {"train", "validation", "test"}, "ranges")
     train = _range(ranges["train"], "ranges.train")
@@ -324,6 +345,8 @@ def load_experiment_spec(
         test=test,
         candidates=tuple(candidates),
         selection_policy=policy,
+        gap_policy_uri=gap_policy_uri,
+        gap_policy_sha256=gap_policy_sha256,
     )
 
 

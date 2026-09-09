@@ -537,7 +537,8 @@ class LiveDashboardSource:
                 report.get("version") != "longer-research-v1"
                 or report.get("status") != "published"
                 or not isinstance(summary, dict)
-                or summary.get("status") not in {"inconclusive", "no_candidate", "evaluated"}
+                or summary.get("status")
+                not in {"inconclusive", "policy_review_required", "no_candidate", "evaluated"}
             ):
                 return {
                     "status": "invalid",
@@ -579,6 +580,8 @@ class LiveDashboardSource:
                 "recommendation": summary.get("recommendation"),
                 "paper_trial_supported": summary.get("paper_trial_supported") is True,
                 "coverage": report.get("coverage_summary"),
+                "gap_policy": report.get("gap_policy"),
+                "policy_valid_minutes_by_range": report.get("policy_valid_minutes_by_range"),
                 "publication": publication.document(),
                 "oos": {
                     "candidate": summary.get("selected_candidate"),
@@ -783,6 +786,11 @@ class LiveDashboardSource:
                     "action": "Investigate the unavailable data source before relying on newer evidence.",
                     "runbook": "docs/runbooks/local-market-data-pipeline.md",
                 }
+        if research.get("status") == "policy_review_required":
+            return {
+                "action": "Review the gap-safe policy before strategy selection.",
+                "runbook": "docs/user_stories/completed/0004-gap-safe-historical-strategy-research.md",
+            }
         if history.get("status") == "ready":
             return {
                 "action": str(history.get("next_action")),

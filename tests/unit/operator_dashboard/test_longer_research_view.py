@@ -91,6 +91,43 @@ def test_invalid_recommendation_does_not_fall_back_to_old_positive_result():
     assert "oos" not in research
 
 
+def test_gap_policy_review_is_visible_and_cannot_support_a_paper_trial():
+    report = _report("policy_review_required")
+    report["gap_policy"] = {
+        "approval_status": "pending_human_review",
+        "missing_candle_action": "exclude_and_reset",
+        "indicator_action": "reset_after_gap",
+    }
+    report["policy_valid_minutes_by_range"] = {"selection": 107517, "test": 21600}
+
+    research = _source(report)._research_status(NOW)
+
+    assert research["status"] == "policy_review_required"
+    assert research["paper_trial_supported"] is False
+    page = _operator_summary(
+        {"research": research, "pilot": {"status": "not_registered"}}
+    )
+    assert "Policy review needed" in page
+    assert "Review the gap-safe policy before strategy selection" in page
+    details = _research_view(research)
+    assert "Gap-safe policy" in details
+    assert "107517" in details
+
+
+def test_gap_policy_review_is_the_dashboard_next_action():
+    action = LiveDashboardSource._next_action(
+        {"status": "healthy"},
+        {"status": "healthy"},
+        {"status": "healthy"},
+        {"status": "healthy"},
+        {"status": "not_registered"},
+        {"status": "policy_review_required"},
+        {"status": "gaps_found"},
+    )
+
+    assert action["action"] == "Review the gap-safe policy before strategy selection."
+
+
 def test_corrupt_report_does_not_fall_back_to_old_result():
     source = _source(_report())
     source._s3_client.documents["research/reports/manifest.json"] = b"not json"

@@ -172,7 +172,9 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
     if pilot_status == "not_registered":
         if isinstance(research, Mapping) and research.get("recommendation"):
             actions.append(_text(research.get("recommendation")))
-            if research_status == "inconclusive":
+            if research_status == "policy_review_required":
+                actions.append("Review the gap-safe policy before strategy selection.")
+            elif research_status == "inconclusive":
                 if history_status == "gaps_found":
                     actions.append(
                         "Define and test how strategy research should handle the five Coinbase outage minutes."
@@ -193,6 +195,7 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
     research_label = "Saved result" if research_status in {"current", "stale"} else research_status
     research_label = {
         "inconclusive": "Not enough data",
+        "policy_review_required": "Policy review needed",
         "no_candidate": "No strategy selected",
         "evaluated": "Test complete",
     }.get(research_status, research_label)
@@ -247,6 +250,26 @@ def _research_view(research: Mapping[str, Any]) -> str:
                     "Available minutes": coverage.get("available_minutes"),
                     "Required minutes": coverage.get("expected_minutes"),
                     "Missing minutes": coverage.get("missing_minutes"),
+                }
+            )
+            + "</article>"
+        )
+    gap_policy = research.get("gap_policy")
+    valid_minutes = research.get("policy_valid_minutes_by_range")
+    if isinstance(gap_policy, Mapping):
+        detail_cards += (
+            '<article class="card"><h3>Gap-safe policy</h3>'
+            + _details(
+                {
+                    "Approval": gap_policy.get("approval_status"),
+                    "Missing candles": gap_policy.get("missing_candle_action"),
+                    "Indicators": gap_policy.get("indicator_action"),
+                    "Selection-valid minutes": (
+                        valid_minutes.get("selection") if isinstance(valid_minutes, Mapping) else None
+                    ),
+                    "Test-valid minutes": (
+                        valid_minutes.get("test") if isinstance(valid_minutes, Mapping) else None
+                    ),
                 }
             )
             + "</article>"

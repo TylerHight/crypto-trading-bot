@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -9,7 +10,11 @@ import pyarrow.parquet as pq
 import pytest
 from crypto_trading_core import longer_research
 from crypto_trading_core.contracts import InvalidBacktestInput, canonical_json_bytes
-from crypto_trading_core.experiment_contracts import load_experiment_spec
+from crypto_trading_core.experiment_contracts import (
+    Candidate,
+    ExperimentRange,
+    load_experiment_spec,
+)
 from crypto_trading_core.storage import ObjectStorage, StorageSettings
 from test_experiments import (
     START,
@@ -274,3 +279,83 @@ def test_existing_summary_tampering_is_rejected(tmp_path):
     path.write_bytes(canonical_json_bytes(report))
     with pytest.raises(InvalidBacktestInput, match="summary conflicts"):
         longer_research.run_research(args, settings)
+
+
+def test_gap_policy_resets_only_the_dependent_sma_window(tmp_path):
+    args, _ = fixture(tmp_path)
+    spec = load_experiment_spec(
+        Path(args.spec).read_bytes(),
+        spec_uri=args.spec,
+        expected_sha256=args.spec_sha256,
+        allowed_spec_prefix="unused",
+        local_development=True,
+    )
+    gap_start = spec.train.start + timedelta(minutes=10)
+    gap_end = gap_start + timedelta(minutes=2)
+    spec = replace(
+        spec,
+        candidates=(Candidate("sma-5-20", 5, 20), Candidate("sma-60-240", 60, 240)),
+        test=ExperimentRange(spec.test.start, gap_end + timedelta(minutes=300)),
+    )
+    rows = [
+        {"window_start": spec.train.start + timedelta(minutes=minute)}
+        for minute in (0, 9, 12, 240, 241)
+    ]
+    coverage = {
+        "status": "inconclusive",
+        "reasons": ["missing_candle_minutes"],
+        "missing_ranges": [{"start": gap_start, "end": gap_end, "minutes": 2}],
+        "available_minutes": len(rows),
+        "expected_minutes": 90 * 1440,
+    }
+    policy = longer_research.GapPolicy(
+        name="test-gap-policy",
+        raw_sha256="a" * 64,
+        source_manifest_sha256=spec.candle_manifest_sha256,
+        approval_status="pending_human_review",
+        declared_missing_ranges=((gap_start, gap_end),),
+    )
+
+    result = longer_research.apply_gap_policy(spec, rows, coverage, policy)
+
+    assert result["status"] == "policy_review_required"
+    assert result["policy_invalidated_ranges"] == [
+        {
+            "start": gap_start,
+            "end": gap_end + timedelta(minutes=239),
+            "minutes": 241,
+        }
+    ]
+    assert result["policy_valid_minutes"] == 2
+    assert result["policy_valid_minutes_by_range"]["test"] == 0
+    assert longer_research.research_summary(result, None)["status"] == "policy_review_required"
+
+
+def test_gap_policy_rejects_a_changed_source_gap_inventory(tmp_path):
+    args, _ = fixture(tmp_path)
+    spec = load_experiment_spec(
+        Path(args.spec).read_bytes(),
+        spec_uri=args.spec,
+        expected_sha256=args.spec_sha256,
+        allowed_spec_prefix="unused",
+        local_development=True,
+    )
+    gap = spec.train.start + timedelta(minutes=5)
+    policy = longer_research.GapPolicy(
+        name="test-gap-policy",
+        raw_sha256="a" * 64,
+        source_manifest_sha256=spec.candle_manifest_sha256,
+        approval_status="pending_human_review",
+        declared_missing_ranges=((gap, gap + timedelta(minutes=1)),),
+    )
+    coverage = {
+        "status": "inconclusive",
+        "reasons": ["missing_candle_minutes"],
+        "missing_ranges": [
+            {"start": gap + timedelta(minutes=1), "end": gap + timedelta(minutes=2), "minutes": 1}
+        ],
+        "available_minutes": 0,
+    }
+
+    with pytest.raises(InvalidBacktestInput, match="source-gap inventory"):
+        longer_research.apply_gap_policy(spec, [], coverage, policy)

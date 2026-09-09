@@ -1,0 +1,14 @@
+{
+  "gap_policy_version": "contiguous-source-minutes-v1",
+  "name": "btc-usd-coinbase-gap-safety-v1",
+  "approval_status": "pending_human_review",
+  "source_manifest_sha256": "0463be6b320b4ba207c65aebf01dab2d4a3ff2e275a227dd6c67d4c259ca1072",
+  "missing_candle_action": "exclude_and_reset",
+  "indicator_action": "reset_after_gap",
+  "pending_order_action": "cancel_at_gap",
+  "open_position_action": "exclude_cross_gap_returns",
+  "declared_missing_ranges": [
+    {"start": "2026-06-29T13:10:00Z", "end": "2026-06-29T13:14:00Z"},
+    {"start": "2026-07-06T01:38:00Z", "end": "2026-07-06T01:39:00Z"}
+  ]
+}

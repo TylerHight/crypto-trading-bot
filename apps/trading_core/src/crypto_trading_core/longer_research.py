@@ -10,10 +10,11 @@ import argparse
 import hashlib
 import json
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
+from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -25,6 +26,9 @@ from crypto_trading_core.contracts import (
     HISTORICAL_CANDLE_SCHEMA_VERSION,
     InvalidBacktestInput,
     canonical_json_bytes,
+    is_local_uri,
+    normalize_uri,
+    parse_utc_minute,
     validate_distinct_prefixes,
 )
 from crypto_trading_core.experiment_contracts import ExperimentSpec, load_experiment_spec
@@ -48,6 +52,106 @@ METADATA_COLUMNS = [
     "source_curated_snapshot_key",
     "candle_schema_version",
 ]
+
+
+@dataclass(frozen=True)
+class GapPolicy:
+    """Pinned rules for a source that genuinely omitted one-minute candles."""
+
+    name: str
+    raw_sha256: str
+    source_manifest_sha256: str
+    approval_status: str
+    declared_missing_ranges: tuple[tuple[datetime, datetime], ...]
+
+
+def _range_pairs(value: Any, field: str) -> tuple[tuple[datetime, datetime], ...]:
+    if not isinstance(value, list) or not value:
+        raise InvalidBacktestInput(f"{field} must contain at least one UTC range")
+    ranges: list[tuple[datetime, datetime]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict) or set(item) != {"start", "end"}:
+            raise InvalidBacktestInput(f"{field}[{index}] must contain only start and end")
+        start, end = item.get("start"), item.get("end")
+        if not isinstance(start, str) or not isinstance(end, str):
+            raise InvalidBacktestInput(f"{field}[{index}] boundaries must be strings")
+        parsed = (
+            parse_utc_minute(start, f"{field}[{index}].start"),
+            parse_utc_minute(end, f"{field}[{index}].end"),
+        )
+        if parsed[0] >= parsed[1]:
+            raise InvalidBacktestInput(f"{field}[{index}] must increase")
+        ranges.append(parsed)
+    if ranges != sorted(ranges) or any(
+        end > next_start for (_, end), (next_start, _) in pairwise(ranges)
+    ):
+        raise InvalidBacktestInput(f"{field} must be ordered and non-overlapping")
+    return tuple(ranges)
+
+
+def load_gap_policy(
+    spec: ExperimentSpec,
+    storage: ObjectStorage,
+    settings: ExperimentSettings,
+    *,
+    local_development: bool,
+) -> GapPolicy | None:
+    """Load a spec-pinned policy without giving it authority to enable research."""
+    if spec.gap_policy_uri is None or spec.gap_policy_sha256 is None:
+        return None
+    uri = spec.gap_policy_uri
+    if is_local_uri(uri):
+        if not local_development:
+            raise InvalidBacktestInput("local gap policies require explicit local-development mode")
+    elif not normalize_uri(uri).startswith(normalize_uri(settings.spec_prefix) + "/"):
+        raise InvalidBacktestInput("gap policy is outside the allowed specification prefix")
+    body = storage.read_bytes(uri)
+    digest = _sha(body)
+    if digest != spec.gap_policy_sha256:
+        raise InvalidBacktestInput("gap policy SHA-256 digest does not match")
+    try:
+        document = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InvalidBacktestInput("gap policy is invalid UTF-8 JSON") from error
+    expected = {
+        "gap_policy_version",
+        "name",
+        "approval_status",
+        "source_manifest_sha256",
+        "missing_candle_action",
+        "indicator_action",
+        "pending_order_action",
+        "open_position_action",
+        "declared_missing_ranges",
+    }
+    if not isinstance(document, dict) or set(document) != expected:
+        raise InvalidBacktestInput("gap policy fields do not match contiguous-source-minutes-v1")
+    if document.get("gap_policy_version") != "contiguous-source-minutes-v1":
+        raise InvalidBacktestInput("unsupported gap policy version")
+    name = document.get("name")
+    source_manifest_sha256 = document.get("source_manifest_sha256")
+    approval_status = document.get("approval_status")
+    if not isinstance(name, str) or not name:
+        raise InvalidBacktestInput("gap policy name is invalid")
+    if not isinstance(source_manifest_sha256, str) or len(source_manifest_sha256) != 64:
+        raise InvalidBacktestInput("gap policy source manifest digest is invalid")
+    if approval_status != "pending_human_review":
+        raise InvalidBacktestInput("gap policy cannot enable research without a separate reviewed implementation")
+    required_actions = {
+        "missing_candle_action": "exclude_and_reset",
+        "indicator_action": "reset_after_gap",
+        "pending_order_action": "cancel_at_gap",
+        "open_position_action": "exclude_cross_gap_returns",
+    }
+    if any(document.get(field) != value for field, value in required_actions.items()):
+        raise InvalidBacktestInput("gap policy contains an unsupported handling action")
+    return GapPolicy(
+        name=name,
+        raw_sha256=digest,
+        source_manifest_sha256=source_manifest_sha256,
+        approval_status=approval_status,
+        declared_missing_ranges=_range_pairs(document["declared_missing_ranges"], "declared_missing_ranges"),
+    )
 
 
 def _sha(body: bytes) -> str:
@@ -125,6 +229,92 @@ def coverage_report(spec: ExperimentSpec, rows: list[dict[str, Any]]) -> dict[st
     }
 
 
+def _merged_ranges(ranges: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def apply_gap_policy(
+    spec: ExperimentSpec,
+    rows: list[dict[str, Any]],
+    coverage: dict[str, Any],
+    policy: GapPolicy,
+) -> dict[str, Any]:
+    """Record exactly which genuine source minutes make an SMA window unusable.
+
+    This is deliberately metadata-only. It cannot observe prices, select a
+    candidate, simulate a fill, or unlock the test period.
+    """
+    if policy.source_manifest_sha256 != spec.candle_manifest_sha256:
+        raise InvalidBacktestInput("gap policy does not pin the candle manifest")
+    observed_gaps = tuple((item["start"], item["end"]) for item in coverage["missing_ranges"])
+    if observed_gaps != policy.declared_missing_ranges:
+        raise InvalidBacktestInput("gap policy does not match the source-gap inventory")
+    max_slow_period = max(item.slow_period for item in spec.candidates)
+    invalidated = _merged_ranges(
+        [
+            (
+                start,
+                min(spec.test.end, end + (max_slow_period - 1) * MINUTE),
+            )
+            for start, end in policy.declared_missing_ranges
+            if start < spec.test.end
+        ]
+    )
+    present = {_utc(row["window_start"]) for row in rows}
+
+    def invalid(stamp: datetime) -> bool:
+        return any(start <= stamp < end for start, end in invalidated)
+
+    ranges = {
+        "train": spec.train,
+        "validation": spec.validation,
+        "test": spec.test,
+    }
+    valid_by_range = {
+        name: sum(interval.start <= stamp < interval.end and not invalid(stamp) for stamp in present)
+        for name, interval in ranges.items()
+    }
+    invalidated_present_minutes = sum(
+        spec.train.start <= stamp < spec.test.end and invalid(stamp) for stamp in present
+    )
+    return {
+        **coverage,
+        "source_coverage_status": coverage["status"],
+        "status": "policy_review_required",
+        "reasons": [*coverage["reasons"], "gap_policy_review_required"],
+        "gap_policy": {
+            "name": policy.name,
+            "version": "contiguous-source-minutes-v1",
+            "sha256": policy.raw_sha256,
+            "approval_status": policy.approval_status,
+            "missing_candle_action": "exclude_and_reset",
+            "indicator_action": "reset_after_gap",
+            "pending_order_action": "cancel_at_gap",
+            "open_position_action": "exclude_cross_gap_returns",
+        },
+        "policy_invalidated_ranges": [
+            {
+                "start": start,
+                "end": end,
+                "minutes": int((end - start) / MINUTE),
+            }
+            for start, end in invalidated
+        ],
+        "policy_invalidated_present_minutes": invalidated_present_minutes,
+        "policy_valid_minutes": coverage["available_minutes"] - invalidated_present_minutes,
+        "policy_valid_minutes_by_range": {
+            **valid_by_range,
+            "selection": valid_by_range["train"] + valid_by_range["validation"],
+        },
+    }
+
+
 def _files(store: ObjectStorage, prefix: str) -> list[str]:
     location = parse_location(prefix)
     if location.scheme == "file":
@@ -151,6 +341,16 @@ def research_summary(coverage: dict[str, Any], evaluation: dict[str, Any] | None
         "recommendation": "Do not start a paper trial.",
         "message": f"Not enough complete history: {coverage['available_minutes']:,} of {coverage['expected_minutes']:,} minutes available. Prepare 90 complete days of candles.",
     }
+    if coverage["status"] == "policy_review_required":
+        summary.update(
+            status="policy_review_required",
+            message=(
+                "The gap-safe policy records the missing source minutes and dependent "
+                "SMA windows. Human review is required before strategy selection."
+            ),
+            recommendation="Review the gap-safe policy. Do not select a strategy or start a paper trial.",
+        )
+        return summary
     if coverage["status"] != "sufficient":
         return summary
     if evaluation is None:
@@ -264,7 +464,21 @@ def run_research(
         raise InvalidBacktestInput("longer research is bounded to 366 calendar days")
     source = _source(spec, settings, storage, local_development=arguments.local_development)
     validate_distinct_prefixes(source.output_uri, output)
-    key = _sha(canonical_json_bytes({"version": VERSION, "spec": spec.canonical_sha256}))
+    historical = source.manifest.get("candle_schema_version") == HISTORICAL_CANDLE_SCHEMA_VERSION
+    gap_policy = load_gap_policy(
+        spec, storage, settings, local_development=arguments.local_development
+    )
+    if historical and gap_policy is None:
+        raise InvalidBacktestInput("historical candle research requires a pinned gap policy")
+    key = _sha(
+        canonical_json_bytes(
+            {
+                "version": VERSION,
+                "spec": spec.canonical_sha256,
+                "gap_policy_sha256": gap_policy.raw_sha256 if gap_policy else None,
+            }
+        )
+    )
     _publish(
         storage,
         child_uri(output, "registrations", spec.name + ".json"),
@@ -273,6 +487,7 @@ def run_research(
             "research_key": key,
             "spec_sha256": _sha(body),
             "candle_manifest_sha256": source.manifest_sha256,
+            "gap_policy_sha256": gap_policy.raw_sha256 if gap_policy else None,
         },
     )
     base = child_uri(output, "runs", key)
@@ -282,7 +497,6 @@ def run_research(
     if storage.read_bytes(spec_uri) != body:
         raise InvalidBacktestInput("registered experiment configuration changed")
     lineage = [{"uri": source.manifest_uri, "sha256": source.manifest_sha256}]
-    historical = source.manifest.get("candle_schema_version") == HISTORICAL_CANDLE_SCHEMA_VERSION
     lineage_prefix = "source_archive" if historical else "source_curated"
     curated_uri = source.manifest.get(lineage_prefix + "_manifest_uri")
     curated_sha = source.manifest.get(lineage_prefix + "_manifest_sha256")
@@ -310,6 +524,8 @@ def run_research(
         frozen = Path(temporary)
         inventory, rows = _freeze(storage, source, spec, frozen)
         coverage = coverage_report(spec, rows)
+        if gap_policy is not None:
+            coverage = apply_gap_policy(spec, rows, coverage, gap_policy)
         coverage.update(
             {
                 "version": VERSION,
@@ -330,6 +546,8 @@ def run_research(
                 "ready": coverage["status"] == "sufficient",
                 "strategy_selected": False,
                 "test_prices_accessed": False,
+                "gap_policy": coverage.get("gap_policy"),
+                "policy_valid_minutes_by_range": coverage.get("policy_valid_minutes_by_range"),
                 "coverage_summary": {
                     name: coverage[name]
                     for name in (
@@ -450,6 +668,8 @@ def run_research(
                     "reasons",
                 )
             },
+            "gap_policy": coverage.get("gap_policy"),
+            "policy_valid_minutes_by_range": coverage.get("policy_valid_minutes_by_range"),
             "selection": selection_ref,
             "evaluation": evaluation_ref,
             "summary": research_summary(coverage, evaluation),

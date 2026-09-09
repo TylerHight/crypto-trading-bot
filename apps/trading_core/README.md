@@ -14,6 +14,31 @@ The checked-in configuration is
 It fixes SMA 5/20, 15/60, and 60/240, starting cash 10,000, fees 40 basis points,
 and slippage 5 basis points. These are research assumptions, not exchange quotes.
 
+### Historical-source gap policy
+
+[`btc-usd-gap-safe-research-v1.json`](../../experiments/btc-usd-gap-safe-research-v1.json)
+pins the completed historical Coinbase dataset and
+[`btc-usd-gap-safe-policy-v1.json`](../../experiments/btc-usd-gap-safe-policy-v1.json).
+The policy records the five source gaps, resets an SMA window after each one,
+and never creates a replacement candle. It is intentionally marked
+`pending_human_review`: the runner publishes coverage but does not select a
+strategy, inspect test prices, or recommend a paper trial.
+
+```powershell
+$env:PYTHONPATH='apps/trading_core/src;packages/domain/src'
+$env:BACKTEST_S3_ENDPOINT='http://127.0.0.1:9000'
+$env:BACKTEST_S3_ACCESS_KEY='minioadmin'
+$env:BACKTEST_S3_SECRET_KEY='minioadmin'
+$env:BACKTEST_CANDLE_MANIFEST_PREFIX='s3a://crypto-data/analytics/historical_candles/v1/manifests'
+$env:BACKTEST_CANDLE_OUTPUT_PREFIX='s3a://crypto-data/analytics/historical_candles/v1/runs'
+$gapSafeDigest=(Get-FileHash experiments/btc-usd-gap-safe-research-v1.json -Algorithm SHA256).Hash.ToLowerInvariant()
+.venv\Scripts\python.exe -m crypto_trading_core.longer_research --spec experiments/btc-usd-gap-safe-research-v1.json --spec-sha256 $gapSafeDigest --local-development
+```
+
+The expected exit is `2`: it means the safety gate worked, not that a strategy
+failed. Review the immutable report in the dashboard before authorizing any
+future, separately implemented selection workflow.
+
 For the existing local Python 3.11 environment, run from the repository root:
 
 ```powershell
