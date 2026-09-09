@@ -19,6 +19,7 @@ from crypto_trading_domain.backtest import Candle, InvalidBacktest, run_backtest
 
 from crypto_trading_core.contracts import (
     BACKTEST_ENGINE_VERSION,
+    HISTORICAL_CANDLE_SCHEMA_VERSION,
     RESULT_SCHEMA_VERSION,
     STRATEGY_VERSION,
     BacktestSpec,
@@ -153,6 +154,12 @@ def load_candle_range(
         raise InvalidBacktestInput("candle snapshot cannot cover the requested range")
 
     connection = duckdb.connect()
+    historical = source.manifest.get("candle_schema_version") == HISTORICAL_CANDLE_SCHEMA_VERSION
+    metadata_columns = (
+        "base_volume, source_archive_key, candle_schema_version"
+        if historical
+        else "base_volume, quote_volume, vwap, trade_count, source_curated_snapshot_key, candle_schema_version"
+    )
     try:
         parquet_uri = _configure_duckdb(connection, source.output_uri, storage_settings)
         relation = (
@@ -162,8 +169,7 @@ def load_candle_range(
         rows = connection.execute(
             f"""
             SELECT exchange, symbol, window_start, window_end, open, high, low, close,
-                   base_volume, quote_volume, vwap, trade_count,
-                   source_curated_snapshot_key, candle_schema_version
+                   {metadata_columns}
             FROM {relation}
             WHERE interval = '1m'
               AND exchange = ?
@@ -205,12 +211,20 @@ def load_candle_range(
             low=row[6],
             close=row[7],
         )
+        if historical:
+            if (
+                not isinstance(row[8], Decimal)
+                or not row[8].is_finite()
+                or row[8] <= 0
+                or row[9] != source.manifest["source_archive_key"]
+                or row[10] != HISTORICAL_CANDLE_SCHEMA_VERSION
+            ):
+                raise InvalidBacktestInput("selected candle violates the historical OHLCV contract")
+            candles.append(candle)
+            continue
         base_volume, quote_volume, vwap, trade_count = row[8:12]
         if (
-            any(
-                not value.is_finite() or value <= 0
-                for value in (base_volume, quote_volume, vwap)
-            )
+            any(not value.is_finite() or value <= 0 for value in (base_volume, quote_volume, vwap))
             or vwap < candle.low
             or vwap > candle.high
             or isinstance(trade_count, bool)
@@ -314,9 +328,9 @@ def run_application(
         ),
         local_development=arguments.local_development,
     )
-    if not is_local_uri(source.output_uri) and not normalize_uri(
-        source.output_uri
-    ).startswith(normalize_uri(settings.source_output_prefix) + "/"):
+    if not is_local_uri(source.output_uri) and not normalize_uri(source.output_uri).startswith(
+        normalize_uri(settings.source_output_prefix) + "/"
+    ):
         raise InvalidBacktestInput("candle output is outside the allowed prefix")
     if not is_local_uri(output):
         allowed_output = normalize_uri(settings.output_prefix)
@@ -380,9 +394,7 @@ def run_application(
     for filename, table in tables.items():
         body = _parquet_bytes(table)
         uri = child_uri(run_uri, filename)
-        storage.write_bytes_append_only(
-            uri, body, content_type="application/vnd.apache.parquet"
-        )
+        storage.write_bytes_append_only(uri, body, content_type="application/vnd.apache.parquet")
         artifacts[filename] = {
             "bytes": len(body),
             "rows": table.num_rows,
@@ -397,9 +409,7 @@ def run_application(
     }
     summary_body = canonical_json_bytes(summary_document)
     summary_uri = child_uri(run_uri, "summary.json")
-    storage.write_bytes_append_only(
-        summary_uri, summary_body, content_type="application/json"
-    )
+    storage.write_bytes_append_only(summary_uri, summary_body, content_type="application/json")
     artifacts["summary.json"] = {
         "bytes": len(summary_body),
         "rows": 1,
@@ -413,9 +423,7 @@ def run_application(
             len(published_body) != metadata["bytes"]
             or hashlib.sha256(published_body).hexdigest() != metadata["sha256"]
         ):
-            raise InvalidBacktestInput(
-                f"published artifact failed read-back validation: {name}"
-            )
+            raise InvalidBacktestInput(f"published artifact failed read-back validation: {name}")
 
     manifest: dict[str, Any] = {
         "artifacts": artifacts,

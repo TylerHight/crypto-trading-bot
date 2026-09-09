@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 CANDLE_SCHEMA_VERSION = "v1"
+HISTORICAL_CANDLE_SCHEMA_VERSION = "exchange-ohlcv-v1"
 SUPPORTED_INTERVAL = "1m"
 STRATEGY_VERSION = "sma-crossover-long-only-v1"
 BACKTEST_ENGINE_VERSION = "candle-backtest-engine-v1"
@@ -89,9 +90,7 @@ def load_candle_snapshot(
             raise InvalidBacktestInput(
                 "local candle manifests require explicit local-development mode"
             )
-    elif not normalize_uri(manifest_uri).startswith(
-        normalize_uri(allowed_manifest_prefix) + "/"
-    ):
+    elif not normalize_uri(manifest_uri).startswith(normalize_uri(allowed_manifest_prefix) + "/"):
         raise InvalidBacktestInput("candle manifest is outside the allowed prefix")
 
     digest = hashlib.sha256(manifest_bytes).hexdigest()
@@ -106,8 +105,21 @@ def load_candle_snapshot(
         raise InvalidBacktestInput("candle manifest must be a JSON object")
     if manifest.get("status") != "published" or manifest.get("mode") != "apply":
         raise InvalidBacktestInput("candle manifest is not a published apply run")
-    if manifest.get("candle_schema_version") != CANDLE_SCHEMA_VERSION:
+    if manifest.get("candle_schema_version") not in {
+        CANDLE_SCHEMA_VERSION,
+        HISTORICAL_CANDLE_SCHEMA_VERSION,
+    }:
         raise InvalidBacktestInput("unsupported candle schema version")
+    if manifest.get("candle_schema_version") == HISTORICAL_CANDLE_SCHEMA_VERSION and (
+        manifest.get("source_kind") != "exchange_ohlcv"
+        or not isinstance(manifest.get("source_archive_manifest_uri"), str)
+        or not SHA256_PATTERN.fullmatch(str(manifest.get("source_archive_manifest_sha256", "")))
+        or not SHA256_PATTERN.fullmatch(str(manifest.get("source_archive_key", "")))
+        or not isinstance(manifest.get("files"), list)
+    ):
+        raise InvalidBacktestInput(
+            "historical candles require explicit archive lineage and file hashes"
+        )
     if manifest.get("interval") != SUPPORTED_INTERVAL:
         raise InvalidBacktestInput("unsupported candle interval")
 

@@ -178,7 +178,9 @@ def test_persisted_standalone_spec_without_forward_start_remains_compatible() ->
     assert restored.session_id == _spec().session_id
 
 
-def test_create_session_recovers_only_sealed_parameters_and_checks_digest(tmp_path) -> None:
+def test_create_session_recovers_only_sealed_parameters_and_checks_digest(
+    tmp_path,
+) -> None:
     def write(name: str, document: dict) -> tuple[str, str]:
         body = json.dumps(document, separators=(",", ":"), sort_keys=True).encode()
         path = tmp_path / name
@@ -387,7 +389,9 @@ def test_gap_and_conflicting_processed_candle_pause_without_advancing() -> None:
     repository = MemoryPaperRepository()
     session = _session()
     _create(repository, session)
-    report = _process(repository, session.session_id, (_candle(1, "12", "12"),), _source(1))
+    report = _process(
+        repository, session.session_id, (_candle(1, "12", "12"),), _source(1)
+    )
     assert report["status"] == "auto_paused"
     assert report["pause_reason"] == "candle_sequence_gap"
     assert repository.get_session(session.session_id).processed_candles == 0
@@ -707,7 +711,9 @@ def test_delayed_forward_start_uses_fresh_warmup_and_counts_only_forward_candles
     assert repository.decisions[session.session_id] == []
 
 
-def test_delayed_forward_start_missing_warmup_pauses_without_processing(tmp_path) -> None:
+def test_delayed_forward_start_missing_warmup_pauses_without_processing(
+    tmp_path,
+) -> None:
     forward_start = START + timedelta(minutes=10)
     base = _session()
     spec = PaperSessionSpec(**{**base.spec.__dict__, "forward_start": forward_start})

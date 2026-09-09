@@ -152,7 +152,9 @@ class MemoryPilotRepository:
     def migrate(self) -> None:
         return None
 
-    def create_pilot(self, pilot: Pilot, *, command_id: str, payload_digest: str) -> tuple[Pilot, bool]:
+    def create_pilot(
+        self, pilot: Pilot, *, command_id: str, payload_digest: str
+    ) -> tuple[Pilot, bool]:
         with self._lock:
             command = self.commands.get(command_id)
             if command and (command[0] != pilot.pilot_id or command[1] != payload_digest):
@@ -179,14 +181,24 @@ class MemoryPilotRepository:
         except KeyError as error:
             raise InvalidPaperTrading("paper pilot does not exist") from error
 
-    def run_cycle(self, pilot_id: str, *, command_id: str, payload_digest: str,
-                  manifest_uri: str, manifest_sha256: str, now: datetime,
-                  runner: CycleRunner) -> dict[str, object]:
+    def run_cycle(
+        self,
+        pilot_id: str,
+        *,
+        command_id: str,
+        payload_digest: str,
+        manifest_uri: str,
+        manifest_sha256: str,
+        now: datetime,
+        runner: CycleRunner,
+    ) -> dict[str, object]:
         with self._lock:
             command = self.commands.get(command_id)
             if command:
                 if command[0] != pilot_id or command[1] != payload_digest:
-                    raise InvalidPaperTrading("pilot command ID was reused with different arguments")
+                    raise InvalidPaperTrading(
+                        "pilot command ID was reused with different arguments"
+                    )
                 if command[2].get("status") == "failed":
                     raise InvalidPaperTrading("paper pilot cycle processing was rejected")
                 return {**command[2], "status": "resolved_existing_command"}
@@ -235,19 +247,24 @@ class MemoryPilotRepository:
             for event in self.paper.events.get(pilot.session_id, [])
         ]
         result = _pause_summary(events, as_of)
-        result.update({
-            "cycles_failed": sum(not row["success"] for row in cycles),
-            "cycles_succeeded": sum(row["success"] for row in cycles),
-            "discovered_candles": sum(int(row["result"].get("discovered", 0)) for row in cycles),
-            "latest_successful_cycle_at": max(
-                (row["completed_at"] for row in cycles if row["success"]), default=None
-            ),
-            "rejected_candles": sum(int(row["result"].get("rejected", 0)) for row in cycles),
-        })
+        result.update(
+            {
+                "cycles_failed": sum(not row["success"] for row in cycles),
+                "cycles_succeeded": sum(row["success"] for row in cycles),
+                "discovered_candles": sum(
+                    int(row["result"].get("discovered", 0)) for row in cycles
+                ),
+                "latest_successful_cycle_at": max(
+                    (row["completed_at"] for row in cycles if row["success"]), default=None
+                ),
+                "rejected_candles": sum(int(row["result"].get("rejected", 0)) for row in cycles),
+            }
+        )
         return result
 
-    def store_snapshot(self, pilot_id: str, event_date: str,
-                       record: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def store_snapshot(
+        self, pilot_id: str, event_date: str, record: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
         with self._lock:
             key = (pilot_id, event_date)
             existing = self.snapshots.get(key)
@@ -259,19 +276,31 @@ class MemoryPilotRepository:
             return record, True
 
     def snapshot_records(self, pilot_id: str) -> list[dict[str, Any]]:
-        return [row for (stored_id, _), row in sorted(self.snapshots.items()) if stored_id == pilot_id]
+        return [
+            row for (stored_id, _), row in sorted(self.snapshots.items()) if stored_id == pilot_id
+        ]
 
     def cycle_records(self, pilot_id: str) -> list[dict[str, Any]]:
         self.get_pilot(pilot_id)
         return list(self.cycles[pilot_id])
 
-    def finalize(self, pilot_id: str, *, command_id: str, payload_digest: str,
-                 state: PilotState, assessment: dict[str, Any], now: datetime) -> tuple[Pilot, bool]:
+    def finalize(
+        self,
+        pilot_id: str,
+        *,
+        command_id: str,
+        payload_digest: str,
+        state: PilotState,
+        assessment: dict[str, Any],
+        now: datetime,
+    ) -> tuple[Pilot, bool]:
         with self._lock:
             command = self.commands.get(command_id)
             if command:
                 if command[0] != pilot_id or command[1] != payload_digest:
-                    raise InvalidPaperTrading("pilot command ID was reused with different arguments")
+                    raise InvalidPaperTrading(
+                        "pilot command ID was reused with different arguments"
+                    )
                 return self.get_pilot(pilot_id), False
             pilot = self.get_pilot(pilot_id)
             if pilot.state.terminal:
@@ -301,7 +330,9 @@ class PostgresPilotRepository:
     def _jsonb():
         return PostgresPaperRepository._psycopg()[2]
 
-    def create_pilot(self, pilot: Pilot, *, command_id: str, payload_digest: str) -> tuple[Pilot, bool]:
+    def create_pilot(
+        self, pilot: Pilot, *, command_id: str, payload_digest: str
+    ) -> tuple[Pilot, bool]:
         Jsonb = self._jsonb()
         try:
             with self._connect() as connection:
@@ -310,19 +341,36 @@ class PostgresPilotRepository:
                     "SELECT pilot_id, payload_digest FROM paper_pilot_commands WHERE command_id=%s",
                     [command_id],
                 ).fetchone()
-                if previous and (previous["pilot_id"] != pilot.pilot_id or previous["payload_digest"] != payload_digest):
-                    raise InvalidPaperTrading("pilot command ID was reused with different arguments")
+                if previous and (
+                    previous["pilot_id"] != pilot.pilot_id
+                    or previous["payload_digest"] != payload_digest
+                ):
+                    raise InvalidPaperTrading(
+                        "pilot command ID was reused with different arguments"
+                    )
                 inserted = connection.execute(
                     """INSERT INTO paper_pilots
                     (pilot_id,session_id,state,plan,raw_plan_sha256,canonical_plan_sha256,
                      approved_by,approval_note,local_development,created_at,updated_at)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (pilot_id) DO NOTHING RETURNING pilot_id""",
-                    [pilot.pilot_id, pilot.session_id, pilot.state.value, Jsonb(_json_document(pilot.plan.document())),
-                     pilot.plan.raw_sha256, pilot.plan.canonical_sha256, pilot.approved_by,
-                     pilot.approval_note, pilot.local_development, pilot.created_at, pilot.created_at],
+                    [
+                        pilot.pilot_id,
+                        pilot.session_id,
+                        pilot.state.value,
+                        Jsonb(_json_document(pilot.plan.document())),
+                        pilot.plan.raw_sha256,
+                        pilot.plan.canonical_sha256,
+                        pilot.approved_by,
+                        pilot.approval_note,
+                        pilot.local_development,
+                        pilot.created_at,
+                        pilot.created_at,
+                    ],
                 ).fetchone()
-                row = connection.execute("SELECT * FROM paper_pilots WHERE pilot_id=%s", [pilot.pilot_id]).fetchone()
+                row = connection.execute(
+                    "SELECT * FROM paper_pilots WHERE pilot_id=%s", [pilot.pilot_id]
+                ).fetchone()
                 if row is None:
                     raise InvalidPaperTrading("pilot registration did not persist")
                 stored = _pilot_from_row(row)
@@ -337,7 +385,13 @@ class PostgresPilotRepository:
                 if inserted and not previous:
                     connection.execute(
                         "INSERT INTO paper_pilot_commands VALUES (%s,%s,'register',%s,%s,%s)",
-                        [command_id, pilot.pilot_id, payload_digest, Jsonb(_json_document(_pilot_document(pilot))), pilot.created_at],
+                        [
+                            command_id,
+                            pilot.pilot_id,
+                            payload_digest,
+                            Jsonb(_json_document(_pilot_document(pilot))),
+                            pilot.created_at,
+                        ],
                     )
                 return stored, inserted is not None
         except InvalidPaperTrading:
@@ -348,7 +402,9 @@ class PostgresPilotRepository:
     def get_pilot(self, pilot_id: str) -> Pilot:
         try:
             with self._connect() as connection:
-                row = connection.execute("SELECT * FROM paper_pilots WHERE pilot_id=%s", [pilot_id]).fetchone()
+                row = connection.execute(
+                    "SELECT * FROM paper_pilots WHERE pilot_id=%s", [pilot_id]
+                ).fetchone()
             if row is None:
                 raise InvalidPaperTrading("paper pilot does not exist")
             return _pilot_from_row(row)
@@ -357,15 +413,25 @@ class PostgresPilotRepository:
         except Exception as error:
             raise InvalidPaperTrading("paper pilot lookup failed") from error
 
-    def run_cycle(self, pilot_id: str, *, command_id: str, payload_digest: str,
-                  manifest_uri: str, manifest_sha256: str, now: datetime,
-                  runner: CycleRunner) -> dict[str, object]:
+    def run_cycle(
+        self,
+        pilot_id: str,
+        *,
+        command_id: str,
+        payload_digest: str,
+        manifest_uri: str,
+        manifest_sha256: str,
+        now: datetime,
+        runner: CycleRunner,
+    ) -> dict[str, object]:
         Jsonb = self._jsonb()
         try:
             failure: Exception | None = None
             with self._connect() as connection:
                 self._set_timeout(connection)
-                row = connection.execute("SELECT * FROM paper_pilots WHERE pilot_id=%s FOR UPDATE", [pilot_id]).fetchone()
+                row = connection.execute(
+                    "SELECT * FROM paper_pilots WHERE pilot_id=%s FOR UPDATE", [pilot_id]
+                ).fetchone()
                 if row is None:
                     raise InvalidPaperTrading("paper pilot does not exist")
                 pilot = _pilot_from_row(row)
@@ -374,8 +440,13 @@ class PostgresPilotRepository:
                     [command_id],
                 ).fetchone()
                 if previous:
-                    if previous["pilot_id"] != pilot_id or previous["payload_digest"] != payload_digest:
-                        raise InvalidPaperTrading("pilot command ID was reused with different arguments")
+                    if (
+                        previous["pilot_id"] != pilot_id
+                        or previous["payload_digest"] != payload_digest
+                    ):
+                        raise InvalidPaperTrading(
+                            "pilot command ID was reused with different arguments"
+                        )
                     if previous["result"].get("status") == "failed":
                         raise InvalidPaperTrading("paper pilot cycle processing was rejected")
                     return {**dict(previous["result"]), "status": "resolved_existing_command"}
@@ -395,8 +466,17 @@ class PostgresPilotRepository:
                     """INSERT INTO paper_pilot_cycles
                     (pilot_id,command_id,payload_digest,manifest_uri,manifest_sha256,
                      started_at,completed_at,success,result) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    [pilot_id, command_id, payload_digest, manifest_uri, manifest_sha256,
-                     now, now, success, Jsonb(report)],
+                    [
+                        pilot_id,
+                        command_id,
+                        payload_digest,
+                        manifest_uri,
+                        manifest_sha256,
+                        now,
+                        now,
+                        success,
+                        Jsonb(report),
+                    ],
                 )
                 connection.execute(
                     "INSERT INTO paper_pilot_commands VALUES (%s,%s,'cycle',%s,%s,%s)",
@@ -430,21 +510,28 @@ class PostgresPilotRepository:
                     [pilot.session_id, as_of],
                 ).fetchall()
             result = _pause_summary([dict(row) for row in events], as_of)
-            result.update({
-                "cycles_failed": sum(not row["success"] for row in cycles),
-                "cycles_succeeded": sum(row["success"] for row in cycles),
-                "discovered_candles": sum(int(row["result"].get("discovered", 0)) for row in cycles),
-                "latest_successful_cycle_at": max(
-                    (row["completed_at"] for row in cycles if row["success"]), default=None
-                ),
-                "rejected_candles": sum(int(row["result"].get("rejected", 0)) for row in cycles),
-            })
+            result.update(
+                {
+                    "cycles_failed": sum(not row["success"] for row in cycles),
+                    "cycles_succeeded": sum(row["success"] for row in cycles),
+                    "discovered_candles": sum(
+                        int(row["result"].get("discovered", 0)) for row in cycles
+                    ),
+                    "latest_successful_cycle_at": max(
+                        (row["completed_at"] for row in cycles if row["success"]), default=None
+                    ),
+                    "rejected_candles": sum(
+                        int(row["result"].get("rejected", 0)) for row in cycles
+                    ),
+                }
+            )
             return result
         except Exception as error:
             raise InvalidPaperTrading("paper pilot evidence query failed") from error
 
-    def store_snapshot(self, pilot_id: str, event_date: str,
-                       record: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def store_snapshot(
+        self, pilot_id: str, event_date: str, record: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
         Jsonb = self._jsonb()
         try:
             with self._connect() as connection:
@@ -453,13 +540,21 @@ class PostgresPilotRepository:
                     (pilot_id,event_date,as_of,artifact_uri,artifact_sha256,manifest_uri,
                      manifest_sha256,document,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (pilot_id,event_date) DO NOTHING RETURNING pilot_id""",
-                    [pilot_id,event_date,record["as_of"],record["artifact_uri"],
-                     record["artifact_sha256"],record["manifest_uri"],record["manifest_sha256"],
-                     Jsonb(_json_document(record["document"])),record["created_at"]],
+                    [
+                        pilot_id,
+                        event_date,
+                        record["as_of"],
+                        record["artifact_uri"],
+                        record["artifact_sha256"],
+                        record["manifest_uri"],
+                        record["manifest_sha256"],
+                        Jsonb(_json_document(record["document"])),
+                        record["created_at"],
+                    ],
                 ).fetchone()
                 existing = connection.execute(
                     "SELECT * FROM paper_pilot_snapshots WHERE pilot_id=%s AND event_date=%s",
-                    [pilot_id,event_date],
+                    [pilot_id, event_date],
                 ).fetchone()
                 if existing["manifest_sha256"] != record["manifest_sha256"]:
                     raise InvalidPaperTrading("daily pilot snapshot already has different content")
@@ -491,13 +586,23 @@ class PostgresPilotRepository:
         except Exception as error:
             raise InvalidPaperTrading("paper pilot cycle lookup failed") from error
 
-    def finalize(self, pilot_id: str, *, command_id: str, payload_digest: str,
-                 state: PilotState, assessment: dict[str, Any], now: datetime) -> tuple[Pilot, bool]:
+    def finalize(
+        self,
+        pilot_id: str,
+        *,
+        command_id: str,
+        payload_digest: str,
+        state: PilotState,
+        assessment: dict[str, Any],
+        now: datetime,
+    ) -> tuple[Pilot, bool]:
         Jsonb = self._jsonb()
         try:
             with self._connect() as connection:
                 self._set_timeout(connection)
-                row = connection.execute("SELECT * FROM paper_pilots WHERE pilot_id=%s FOR UPDATE", [pilot_id]).fetchone()
+                row = connection.execute(
+                    "SELECT * FROM paper_pilots WHERE pilot_id=%s FOR UPDATE", [pilot_id]
+                ).fetchone()
                 if row is None:
                     raise InvalidPaperTrading("paper pilot does not exist")
                 pilot = _pilot_from_row(row)
@@ -506,20 +611,27 @@ class PostgresPilotRepository:
                     [command_id],
                 ).fetchone()
                 if previous:
-                    if previous["pilot_id"] != pilot_id or previous["payload_digest"] != payload_digest:
-                        raise InvalidPaperTrading("pilot command ID was reused with different arguments")
+                    if (
+                        previous["pilot_id"] != pilot_id
+                        or previous["payload_digest"] != payload_digest
+                    ):
+                        raise InvalidPaperTrading(
+                            "pilot command ID was reused with different arguments"
+                        )
                     return pilot, False
                 if pilot.state.terminal:
                     raise InvalidPaperTrading("paper pilot is already terminal")
                 connection.execute(
                     "UPDATE paper_pilots SET state=%s,assessment=%s,finalized_at=%s,updated_at=%s WHERE pilot_id=%s",
-                    [state.value,Jsonb(_json_document(assessment)),now,now,pilot_id],
+                    [state.value, Jsonb(_json_document(assessment)), now, now, pilot_id],
                 )
                 connection.execute(
                     "INSERT INTO paper_pilot_commands VALUES (%s,%s,'finalize',%s,%s,%s)",
-                    [command_id,pilot_id,payload_digest,Jsonb(_json_document(assessment)),now],
+                    [command_id, pilot_id, payload_digest, Jsonb(_json_document(assessment)), now],
                 )
-                updated = connection.execute("SELECT * FROM paper_pilots WHERE pilot_id=%s", [pilot_id]).fetchone()
+                updated = connection.execute(
+                    "SELECT * FROM paper_pilots WHERE pilot_id=%s", [pilot_id]
+                ).fetchone()
                 return _pilot_from_row(updated), True
         except InvalidPaperTrading:
             raise

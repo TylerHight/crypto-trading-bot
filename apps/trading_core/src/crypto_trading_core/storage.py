@@ -93,9 +93,7 @@ class ObjectStorage:
             IfNoneMatch="*",
         )
 
-    def try_write_bytes_append_only(
-        self, uri: str, body: bytes, *, content_type: str
-    ) -> bool:
+    def try_write_bytes_append_only(self, uri: str, body: bytes, *, content_type: str) -> bool:
         try:
             self.write_bytes_append_only(uri, body, content_type=content_type)
         except FileExistsError:

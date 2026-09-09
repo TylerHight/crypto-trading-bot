@@ -61,17 +61,12 @@ def test_raw_audit_defaults_match_local_compose() -> None:
     assert settings.kafka_topic == "market.trades.raw.v1"
     assert settings.input_path == "s3a://crypto-data/raw/market_trade_raw/v1"
     assert settings.s3_endpoint == "http://minio:9000"
-    assert (
-        settings.report_prefix
-        == "s3a://crypto-data/reconciliation/raw-integrity"
-    )
+    assert settings.report_prefix == "s3a://crypto-data/reconciliation/raw-integrity"
     assert settings.sample_limit == 20
 
 
 def test_raw_audit_normalizes_input_path() -> None:
-    settings = RawAuditSettings.from_env(
-        {"RAW_AUDIT_INPUT_PATH": "s3a://bucket/raw/"}
-    )
+    settings = RawAuditSettings.from_env({"RAW_AUDIT_INPUT_PATH": "s3a://bucket/raw/"})
 
     assert settings.input_path == "s3a://bucket/raw"
 
@@ -86,9 +81,7 @@ def test_raw_audit_normalizes_report_prefix() -> None:
 
 def test_raw_audit_requires_s3a_report_prefix() -> None:
     with pytest.raises(ValueError, match="RAW_AUDIT_REPORT_PREFIX"):
-        RawAuditSettings.from_env(
-            {"RAW_AUDIT_REPORT_PREFIX": "file:///tmp/evidence"}
-        )
+        RawAuditSettings.from_env({"RAW_AUDIT_REPORT_PREFIX": "file:///tmp/evidence"})
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])

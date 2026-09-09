@@ -97,7 +97,9 @@ def test_cost_math_is_exact_and_cash_never_goes_negative() -> None:
 
 
 def test_equal_averages_remain_flat() -> None:
-    flat = tuple(candle(index, open_price="10", close_price="10") for index in range(-2, 3))
+    flat = tuple(
+        candle(index, open_price="10", close_price="10") for index in range(-2, 3)
+    )
     result = run_backtest(
         flat,
         start=START,

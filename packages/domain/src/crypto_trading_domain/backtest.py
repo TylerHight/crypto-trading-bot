@@ -213,11 +213,7 @@ class SmaCrossoverStrategy:
             context.prec = 114
             fast_sma = _q18(sum(closes[-self.fast_period :], Decimal(0)) / self.fast_period)
             slow_sma = _q18(sum(closes, Decimal(0)) / self.slow_period)
-        target = (
-            TargetPosition.LONG
-            if fast_sma > slow_sma
-            else TargetPosition.FLAT
-        )
+        target = TargetPosition.LONG if fast_sma > slow_sma else TargetPosition.FLAT
         if target == self._target:
             return None
         decision = StrategyDecision(
@@ -423,7 +419,9 @@ def _validate_candle_sequence(
         if candle.exchange != exchange or candle.symbol != symbol:
             raise InvalidBacktest("backtest candles must have one exchange and symbol")
         expected = expected_first + ONE_MINUTE * index
-        if candle.window_start != expected or (previous is not None and candle.window_start <= previous):
+        if candle.window_start != expected or (
+            previous is not None and candle.window_start <= previous
+        ):
             raise InvalidBacktest("candle sequence has a duplicate, gap, or ordering error")
         previous = candle.window_start
 
@@ -501,15 +499,9 @@ def run_backtest(
     absolute_return = _q18(ending_equity - cash)
     percentage_return = _q18(_ratio(absolute_return, cash) * Decimal(100))
     total_fees = _q18(sum((fill.fee for fill in fills), Decimal(0)))
-    gross_notional = _q18(
-        sum((fill.gross_notional for fill in fills), Decimal(0))
-    )
-    long_candles = sum(
-        observation.position is TargetPosition.LONG for observation in observations
-    )
-    percentage_long = _q18(
-        _ratio(Decimal(long_candles), Decimal(len(observations))) * Decimal(100)
-    )
+    gross_notional = _q18(sum((fill.gross_notional for fill in fills), Decimal(0)))
+    long_candles = sum(observation.position is TargetPosition.LONG for observation in observations)
+    percentage_long = _q18(_ratio(Decimal(long_candles), Decimal(len(observations))) * Decimal(100))
     summary = BacktestSummary(
         starting_equity=cash,
         ending_equity=ending_equity,
@@ -546,9 +538,7 @@ def run_buy_and_hold(
     cash = _q18(starting_cash)
     if cash <= 0:
         raise InvalidBacktest("starting_cash must be positive")
-    _, evaluation = _validate_candle_sequence(
-        candles, start=start, end=end, slow_period=1
-    )
+    _, evaluation = _validate_candle_sequence(candles, start=start, end=end, slow_period=1)
     initial_state = PortfolioState(cash=cash, base_quantity=_q18(Decimal(0)))
     allocation = StrategyDecision(
         decision_time=evaluation[0].window_start,

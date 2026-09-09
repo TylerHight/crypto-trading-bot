@@ -32,7 +32,9 @@ def _write_candle_snapshot(tmp_path: Path) -> tuple[Path, str]:
     for index, value in enumerate(closes, start=-2):
         timestamp = START + timedelta(minutes=index)
         price = Decimal(value).quantize(Decimal("0.000000000000000001"))
-        rows_by_partition.setdefault((timestamp.date(), f"{timestamp.hour:02d}"), []).append(
+        rows_by_partition.setdefault(
+            (timestamp.date(), f"{timestamp.hour:02d}"), []
+        ).append(
             {
                 "exchange": "coinbase",
                 "symbol": "BTC-USD",
@@ -185,7 +187,9 @@ def test_validator_rejects_a_tampered_artifact(tmp_path: Path) -> None:
     fills.write_bytes(fills.read_bytes() + b"tampered")
 
     with pytest.raises(InvalidBacktestInput, match="byte count|digest"):
-        validate_manifest(report["manifest_uri"], settings=settings, local_development=True)
+        validate_manifest(
+            report["manifest_uri"], settings=settings, local_development=True
+        )
 
 
 def test_manifest_pinning_and_key_versioning() -> None:
@@ -239,4 +243,8 @@ def test_local_paths_require_explicit_development_mode(tmp_path: Path) -> None:
     arguments = _arguments(source_manifest, digest, tmp_path / "output")
     arguments.local_development = False
     with pytest.raises(InvalidBacktestInput, match="local"):
-        run_application(arguments, _settings(tmp_path / "output"), store=ObjectStorage(StorageSettings()))
+        run_application(
+            arguments,
+            _settings(tmp_path / "output"),
+            store=ObjectStorage(StorageSettings()),
+        )

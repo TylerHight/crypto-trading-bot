@@ -35,7 +35,9 @@ class Producer:
         return 0
 
 
-def test_publisher_uses_canonical_key_headers_and_returns_acknowledged_position() -> None:
+def test_publisher_uses_canonical_key_headers_and_returns_acknowledged_position() -> (
+    None
+):
     producer = Producer()
     event = market_trade_event(
         exchange="coinbase",
@@ -64,7 +66,9 @@ def test_publisher_uses_canonical_key_headers_and_returns_acknowledged_position(
     )
 
 
-def test_constructed_producer_enables_idempotence_and_all_acks(monkeypatch: Any) -> None:
+def test_constructed_producer_enables_idempotence_and_all_acks(
+    monkeypatch: Any,
+) -> None:
     configs: list[dict[str, Any]] = []
 
     class ConfigProducer(Producer):

@@ -248,9 +248,7 @@ def test_partitions_are_compared_independently(spark: SparkSession) -> None:
         [parquet_row(5, "p0", partition=0)],
     )
 
-    partitions = {
-        row["kafka_partition"]: row for row in report["partitions"]
-    }
+    partitions = {row["kafka_partition"]: row for row in report["partitions"]}
     assert partitions[0]["missing_from_parquet"] == 0
     assert partitions[1]["missing_from_parquet"] == 1
 
@@ -268,9 +266,7 @@ def test_empty_kafka_partition_is_included_from_captured_bounds(
         ],
     )
 
-    partitions = {
-        row["kafka_partition"]: row for row in report["partitions"]
-    }
+    partitions = {row["kafka_partition"]: row for row in report["partitions"]}
     assert report["status"] == "passed"
     assert partitions[0]["kafka_records"] == 0
     assert partitions[0]["parquet_records_in_range"] == 0

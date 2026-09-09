@@ -196,13 +196,19 @@ def test_sealed_selection_and_out_of_sample_evaluation_on_minio() -> None:
 
         candidate_uri = selection["artifacts"]["candidate_results.parquet"]["uri"]
         candidate_key = candidate_uri.split("crypto-data/", 1)[1]
-        candidate_body = s3.get_object(Bucket="crypto-data", Key=candidate_key)["Body"].read()
-        ranges = set(pq.read_table(BytesIO(candidate_body)).column("range_name").to_pylist())
+        candidate_body = s3.get_object(Bucket="crypto-data", Key=candidate_key)[
+            "Body"
+        ].read()
+        ranges = set(
+            pq.read_table(BytesIO(candidate_body)).column("range_name").to_pylist()
+        )
         assert ranges == {"train", "validation"}
 
         selection_uri = selection["manifest_uri"]
         selection_key = selection_uri.split("crypto-data/", 1)[1]
-        selection_body = s3.get_object(Bucket="crypto-data", Key=selection_key)["Body"].read()
+        selection_body = s3.get_object(Bucket="crypto-data", Key=selection_key)[
+            "Body"
+        ].read()
         selection_digest = hashlib.sha256(selection_body).hexdigest()
         selection_validation = _run(
             "crypto_trading_core.validate_experiment",
@@ -238,7 +244,9 @@ def test_sealed_selection_and_out_of_sample_evaluation_on_minio() -> None:
 
         evaluation_uri = evaluation["manifest_uri"]
         evaluation_key = evaluation_uri.split("crypto-data/", 1)[1]
-        evaluation_body = s3.get_object(Bucket="crypto-data", Key=evaluation_key)["Body"].read()
+        evaluation_body = s3.get_object(Bucket="crypto-data", Key=evaluation_key)[
+            "Body"
+        ].read()
         evaluation_digest = hashlib.sha256(evaluation_body).hexdigest()
         evaluation_validation = _run(
             "crypto_trading_core.validate_experiment",
@@ -260,9 +268,9 @@ def test_sealed_selection_and_out_of_sample_evaluation_on_minio() -> None:
             ["--spec", spec_uri, "--spec-sha256", spec_digest, "--output", output_uri],
             environment,
         )
-        assert _report(repeated_prepare.stdout, "EXPERIMENT_SELECTION_JSON=")["status"] == (
-            "resolved_existing_selection"
-        )
+        assert _report(repeated_prepare.stdout, "EXPERIMENT_SELECTION_JSON=")[
+            "status"
+        ] == ("resolved_existing_selection")
         repeated_evaluate = _run(
             "crypto_trading_core.evaluate_experiment",
             [
@@ -275,13 +283,15 @@ def test_sealed_selection_and_out_of_sample_evaluation_on_minio() -> None:
             ],
             environment,
         )
-        assert _report(repeated_evaluate.stdout, "EXPERIMENT_EVALUATION_JSON=")["status"] == (
-            "resolved_existing_evaluation"
-        )
+        assert _report(repeated_evaluate.stdout, "EXPERIMENT_EVALUATION_JSON=")[
+            "status"
+        ] == ("resolved_existing_evaluation")
 
         comparison_uri = evaluation["artifacts"]["comparison.json"]["uri"]
         comparison_key = comparison_uri.split("crypto-data/", 1)[1]
-        comparison_body = s3.get_object(Bucket="crypto-data", Key=comparison_key)["Body"].read()
+        comparison_body = s3.get_object(Bucket="crypto-data", Key=comparison_key)[
+            "Body"
+        ].read()
         s3.put_object(
             Bucket="crypto-data", Key=comparison_key, Body=comparison_body + b"tampered"
         )

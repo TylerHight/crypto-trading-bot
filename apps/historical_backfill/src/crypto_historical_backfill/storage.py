@@ -72,11 +72,7 @@ class ObjectStorage:
             return None
         except Exception as error:
             response = getattr(error, "response", None)
-            code = (
-                response.get("Error", {}).get("Code")
-                if isinstance(response, dict)
-                else None
-            )
+            code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
             status = (
                 response.get("ResponseMetadata", {}).get("HTTPStatusCode")
                 if isinstance(response, dict)
@@ -123,11 +119,7 @@ class ObjectStorage:
             return False
         except Exception as error:
             response = getattr(error, "response", None)
-            code = (
-                response.get("Error", {}).get("Code")
-                if isinstance(response, dict)
-                else None
-            )
+            code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
             status = (
                 response.get("ResponseMetadata", {}).get("HTTPStatusCode")
                 if isinstance(response, dict)

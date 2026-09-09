@@ -15,6 +15,8 @@ from jobs.spark.transforms.curated_market_trades import (
 
 NOW = datetime(2026, 8, 26, 17, 0, tzinfo=UTC)
 EVENT_TIME = "2026-08-25T14:00:01Z"
+
+
 def event_id(symbol: str, trade_id: str) -> str:
     identity = json.dumps(
         ["market.trade.raw", "v1", "coinbase", symbol, trade_id],
@@ -46,7 +48,9 @@ def event(
         "producer": producer,
         "trace_id": trace_id,
         "correlation_id": None,
-        "causation_id": str(uuid4()) if producer == "apps.historical_backfill" else None,
+        "causation_id": str(uuid4())
+        if producer == "apps.historical_backfill"
+        else None,
         "payload": {
             "trade_id": trade_id,
             "product_id": symbol,
@@ -167,17 +171,28 @@ def test_invalid_side_is_quarantined(side: object) -> None:
 @pytest.mark.parametrize(
     ("mutation", "failure"),
     [
-        (lambda value: value["payload"].update(trade_id="other"), "payload_identity_mismatch"),
-        (lambda value: value["payload"].update(product_id="ETH-USD"), "payload_identity_mismatch"),
+        (
+            lambda value: value["payload"].update(trade_id="other"),
+            "payload_identity_mismatch",
+        ),
+        (
+            lambda value: value["payload"].update(product_id="ETH-USD"),
+            "payload_identity_mismatch",
+        ),
         (
             lambda value: value["payload"].update(time="2026-08-25T14:00:02Z"),
             "payload_time_mismatch",
         ),
-        (lambda value: value.update(event_time="2026-08-25T14:00:01"), "invalid_envelope_contract"),
+        (
+            lambda value: value.update(event_time="2026-08-25T14:00:01"),
+            "invalid_envelope_contract",
+        ),
         (lambda value: value.update(producer="unknown"), "invalid_envelope_contract"),
     ],
 )
-def test_payload_envelope_and_producer_mismatches_quarantine(mutation, failure: str) -> None:
+def test_payload_envelope_and_producer_mismatches_quarantine(
+    mutation, failure: str
+) -> None:
     document = event()
     mutation(document)
     assert validate(document).quarantine["failure_code"] == failure  # type: ignore[index]
@@ -190,12 +205,18 @@ def test_kafka_key_and_headers_must_match() -> None:
     header_record = raw(document)
     header_record["kafka_headers"][1]["value"] = b"v2"  # type: ignore[index]
 
-    assert validate_raw_record(
-        key_record, run_id="run", curated_at=NOW
-    ).quarantine["failure_code"] == "invalid_kafka_key"  # type: ignore[index]
-    assert validate_raw_record(
-        header_record, run_id="run", curated_at=NOW
-    ).quarantine["failure_code"] == "invalid_headers"  # type: ignore[index]
+    assert (
+        validate_raw_record(key_record, run_id="run", curated_at=NOW).quarantine[
+            "failure_code"
+        ]
+        == "invalid_kafka_key"
+    )  # type: ignore[index]
+    assert (
+        validate_raw_record(header_record, run_id="run", curated_at=NOW).quarantine[
+            "failure_code"
+        ]
+        == "invalid_headers"
+    )  # type: ignore[index]
 
 
 def test_invalid_utf8_and_json_are_hashed_without_payload_copy() -> None:
@@ -265,13 +286,22 @@ def test_conflicting_duplicate_has_no_winner_and_safe_quarantine(spark) -> None:
 
 
 def test_symbols_are_independent_and_input_order_is_deterministic(spark) -> None:
-    values = [raw(event("btc", symbol="BTC-USD"), 3), raw(event("eth", symbol="ETH-USD"), 2)]
-    forward = curate_market_trades(
-        raw_frame(spark, values), run_id="run", curated_at=NOW
-    ).curated.orderBy("event_id").collect()
-    reverse = curate_market_trades(
-        raw_frame(spark, list(reversed(values))), run_id="run", curated_at=NOW
-    ).curated.orderBy("event_id").collect()
+    values = [
+        raw(event("btc", symbol="BTC-USD"), 3),
+        raw(event("eth", symbol="ETH-USD"), 2),
+    ]
+    forward = (
+        curate_market_trades(raw_frame(spark, values), run_id="run", curated_at=NOW)
+        .curated.orderBy("event_id")
+        .collect()
+    )
+    reverse = (
+        curate_market_trades(
+            raw_frame(spark, list(reversed(values))), run_id="run", curated_at=NOW
+        )
+        .curated.orderBy("event_id")
+        .collect()
+    )
 
     assert forward == reverse
     assert {row["symbol"] for row in forward} == {"BTC-USD", "ETH-USD"}

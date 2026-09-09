@@ -120,7 +120,9 @@ def _execute(
     not _enabled(),
     reason="set RUN_PAPER_INTEGRATION_TESTS=1 with local PostgreSQL available",
 )
-def test_postgres_paper_state_is_transactional_restartable_and_concurrency_safe() -> None:
+def test_postgres_paper_state_is_transactional_restartable_and_concurrency_safe() -> (
+    None
+):
     import psycopg
 
     database_url = os.getenv(
@@ -155,7 +157,9 @@ def test_postgres_paper_state_is_transactional_restartable_and_concurrency_safe(
         )
         assert retry["status"] == "resolved_existing_command"
 
-        restarted = PostgresPaperRepository(database_url, transaction_timeout_seconds=10)
+        restarted = PostgresPaperRepository(
+            database_url, transaction_timeout_seconds=10
+        )
         second = _execute(
             restarted,
             session.session_id,
@@ -169,7 +173,9 @@ def test_postgres_paper_state_is_transactional_restartable_and_concurrency_safe(
             futures = [
                 executor.submit(
                     _execute,
-                    PostgresPaperRepository(database_url, transaction_timeout_seconds=10),
+                    PostgresPaperRepository(
+                        database_url, transaction_timeout_seconds=10
+                    ),
                     session.session_id,
                     concurrent_source,
                     (_candle(3, "8"),),

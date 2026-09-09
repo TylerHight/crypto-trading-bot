@@ -5,6 +5,55 @@ reconciliation, and later idempotent backfill workflows. Scheduling belongs in
 `orchestration/airflow/`; exchange HTTP behavior stays in
 `packages/exchange_adapters/`.
 
+## Historical research candles
+
+`prepare-historical-candles` downloads a fixed BTC-USD one-minute range from
+Coinbase Exchange's public candle endpoint. The checked-in plan is
+[`datasets/btc-usd-history-v1.json`](../../datasets/btc-usd-history-v1.json).
+It covers June 10 through September 8, 2026 UTC plus 239 warmup minutes.
+
+Coinbase limits each request to 300 candles and warns that intervals without
+ticks have no candle. The downloader uses non-overlapping pages, bounded retries,
+a 0.15-second request interval, and a 1,800-request limit. Each response is saved
+with its hash before normalization, so an interrupted run resumes from its pages.
+
+```powershell
+$env:PYTHONPATH='apps/historical_backfill/src;packages/exchange_adapters/src;packages/domain/src'
+$planDigest=(Get-FileHash datasets/btc-usd-history-v1.json -Algorithm SHA256).Hash.ToLower()
+.venv311\Scripts\python.exe -m crypto_historical_backfill.historical_candles `
+  --plan datasets/btc-usd-history-v1.json --plan-sha256 $planDigest
+```
+
+The publication is a separate `exchange-ohlcv-v1` source under
+`analytics/historical_candles/v1/`. It does not claim the trade-level lineage,
+VWAP, or trade counts of live-pipeline candles. Its manifest lists every source
+page, output Parquet file, digest, duplicate, conflict, and missing-minute range.
+
+The real download saved all 433 requested pages and 129,834 candles. Coinbase
+published no candle for five minutes: June 29 13:10–13:14 UTC and July 6 01:38
+UTC. Targeted checks against both Coinbase public candle endpoints returned no
+candle for those minutes. No replacement prices were created.
+
+Use the coverage-only research command to validate a publication without
+choosing or evaluating a strategy:
+
+```powershell
+$env:PYTHONPATH='apps/trading_core/src;packages/domain/src'
+$env:BACKTEST_S3_ENDPOINT='http://127.0.0.1:9000'
+$env:BACKTEST_S3_ACCESS_KEY='minioadmin'
+$env:BACKTEST_S3_SECRET_KEY='minioadmin'
+$env:BACKTEST_CANDLE_MANIFEST_PREFIX='s3a://crypto-data/analytics/historical_candles/v1/manifests'
+$env:BACKTEST_CANDLE_OUTPUT_PREFIX='s3a://crypto-data/analytics/historical_candles/v1/runs'
+$digest=(Get-FileHash experiments/btc-usd-historical-readiness-v1.json -Algorithm SHA256).Hash.ToLower()
+.venv311\Scripts\python.exe -m crypto_trading_core.longer_research `
+  --spec experiments/btc-usd-historical-readiness-v1.json `
+  --spec-sha256 $digest --coverage-only --local-development
+```
+
+The current result is `inconclusive`: 129,595 of 129,600 research minutes are
+present. Acquisition is complete, but backtesting remains blocked until a fixed
+gap-handling policy is defined and tested.
+
 ## Coinbase trade reconciliation
 
 `reconcile-coinbase-trades` compares one explicit Coinbase product/time range

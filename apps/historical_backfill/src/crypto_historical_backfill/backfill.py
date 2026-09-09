@@ -264,9 +264,7 @@ class BackfillStateStore:
             content_type="application/json",
         )
 
-    def claim(
-        self, value: BackfillInput, finding: ConfirmedFinding, backfill_run_id: UUID
-    ) -> bool:
+    def claim(self, value: BackfillInput, finding: ConfirmedFinding, backfill_run_id: UUID) -> bool:
         uri = child_uri(
             self.output_base,
             "claims",
@@ -303,9 +301,7 @@ class BackfillStateStore:
             content_type="application/json",
         )
 
-    def read_receipt(
-        self, value: BackfillInput, finding: ConfirmedFinding
-    ) -> KafkaReceipt | None:
+    def read_receipt(self, value: BackfillInput, finding: ConfirmedFinding) -> KafkaReceipt | None:
         content = self.storage.try_read_bytes(self._receipt_uri(value, finding))
         if content is None:
             return None
@@ -455,7 +451,9 @@ class BackfillService:
                     or trade is None
                     or trade.event_time.astimezone(UTC) != finding.event_time
                 ):
-                    results.append(self._record(value, finding, run_id, "unresolved_source_changed"))
+                    results.append(
+                        self._record(value, finding, run_id, "unresolved_source_changed")
+                    )
                     continue
                 scan = self.archive.scan(
                     symbol=value.symbol,
@@ -476,9 +474,7 @@ class BackfillService:
                     receipt = self.state.read_receipt(value, finding)
                     if receipt is None:
                         results.append(
-                            self._record(
-                                value, finding, run_id, "unresolved_ambiguous_publication"
-                            )
+                            self._record(value, finding, run_id, "unresolved_ambiguous_publication")
                         )
                     else:
                         results.append(self._verify(value, finding, run_id, receipt))
@@ -635,8 +631,10 @@ class BackfillService:
         states = [result.state for result in results]
         resolved = {"skipped_already_archived", "resolved_backfilled"}
         publish_attempted = sum(result.publication_attempted for result in results)
-        if not apply and "dry_run_ready" in states and all(
-            state in {"dry_run_ready", "skipped_already_archived"} for state in states
+        if (
+            not apply
+            and "dry_run_ready" in states
+            and all(state in {"dry_run_ready", "skipped_already_archived"} for state in states)
         ):
             status = "dry_run_ready"
         elif all(state in resolved for state in states) and publish_attempted == 0:
@@ -670,9 +668,9 @@ class BackfillService:
             + states.count("published_pending_archive"),
             "failed": states.count("failed_retryable") + states.count("failed_permanent"),
             "samples": {
-                state: [
-                    result.safe_dict() for result in results if result.state == state
-                ][: self.sample_limit]
+                state: [result.safe_dict() for result in results if result.state == state][
+                    : self.sample_limit
+                ]
                 for state in sample_states
             },
         }

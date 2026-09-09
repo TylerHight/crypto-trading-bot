@@ -132,9 +132,9 @@ def _source(
         allowed_manifest_prefix=settings.backtest.source_manifest_prefix,
         local_development=local_development,
     )
-    if not is_local_uri(source.output_uri) and not normalize_uri(
-        source.output_uri
-    ).startswith(normalize_uri(settings.backtest.source_output_prefix) + "/"):
+    if not is_local_uri(source.output_uri) and not normalize_uri(source.output_uri).startswith(
+        normalize_uri(settings.backtest.source_output_prefix) + "/"
+    ):
         raise InvalidBacktestInput("candle output is outside the allowed prefix")
     return source
 
@@ -277,9 +277,7 @@ def _candidate_row(
         "gross_traded_notional": _decimal(
             summary.get("gross_traded_notional"), "gross_traded_notional"
         ),
-        "maximum_drawdown": _decimal(
-            summary.get("maximum_drawdown"), "maximum_drawdown"
-        ),
+        "maximum_drawdown": _decimal(summary.get("maximum_drawdown"), "maximum_drawdown"),
         "percentage_candles_long": _decimal(
             summary.get("percentage_candles_long"), "percentage_candles_long"
         ),
@@ -398,13 +396,9 @@ def prepare_experiment(
         allowed_spec_prefix=settings.spec_prefix,
         local_development=arguments.local_development,
         maximum_candidates=settings.maximum_candidates,
-        maximum_candidate_candle_evaluations=(
-            settings.maximum_candidate_candle_evaluations
-        ),
+        maximum_candidate_candle_evaluations=(settings.maximum_candidate_candle_evaluations),
     )
-    source = _source(
-        spec, settings, storage, local_development=arguments.local_development
-    )
+    source = _source(spec, settings, storage, local_development=arguments.local_development)
     validate_distinct_prefixes(source.output_uri, output)
     key = selection_key(spec, source)
     manifest_uri = child_uri(output, "selections", key, "manifest.json")
@@ -557,10 +551,7 @@ def load_selection_manifest(
 ) -> tuple[dict[str, Any], str]:
     body = store.read_bytes(uri)
     digest = hashlib.sha256(body).hexdigest()
-    if (
-        not SHA256_PATTERN.fullmatch(expected_sha256)
-        or digest != expected_sha256
-    ):
+    if not SHA256_PATTERN.fullmatch(expected_sha256) or digest != expected_sha256:
         raise InvalidBacktestInput("selection manifest SHA-256 digest does not match")
     try:
         manifest = json.loads(body)
@@ -575,16 +566,13 @@ def load_selection_manifest(
     if (
         not isinstance(identity, dict)
         or not isinstance(selection_key_value, str)
-        or hashlib.sha256(canonical_json_bytes(identity)).hexdigest()
-        != selection_key_value
+        or hashlib.sha256(canonical_json_bytes(identity)).hexdigest() != selection_key_value
     ):
         raise InvalidBacktestInput("selection manifest identity is invalid")
     return manifest, digest
 
 
-def _artifact_body(
-    store: ObjectStorage, metadata: Any, field: str
-) -> bytes:
+def _artifact_body(store: ObjectStorage, metadata: Any, field: str) -> bytes:
     if not isinstance(metadata, dict) or not isinstance(metadata.get("uri"), str):
         raise InvalidBacktestInput(f"{field} artifact metadata is invalid")
     body = store.read_bytes(metadata["uri"])
@@ -635,13 +623,9 @@ def evaluate_experiment(
         allowed_spec_prefix=settings.spec_prefix,
         local_development=arguments.local_development,
         maximum_candidates=settings.maximum_candidates,
-        maximum_candidate_candle_evaluations=(
-            settings.maximum_candidate_candle_evaluations
-        ),
+        maximum_candidate_candle_evaluations=(settings.maximum_candidate_candle_evaluations),
     )
-    source = _source(
-        spec, settings, storage, local_development=arguments.local_development
-    )
+    source = _source(spec, settings, storage, local_development=arguments.local_development)
     validate_distinct_prefixes(source.output_uri, output)
     expected_selection_key = selection_key(spec, source)
     if (
@@ -715,13 +699,9 @@ def evaluate_experiment(
         "selection_basis": "train_and_validation_only",
         "strategy": strategy_summary,
         "strategy_backtest_key": strategy_report["backtest_key"],
-        "strategy_backtest_manifest_sha256": hashlib.sha256(
-            strategy_manifest_body
-        ).hexdigest(),
+        "strategy_backtest_manifest_sha256": hashlib.sha256(strategy_manifest_body).hexdigest(),
         "strategy_backtest_manifest_uri": strategy_report["manifest_uri"],
-        "strategy_excess_absolute_return": (
-            strategy_absolute - baseline_row["absolute_return"]
-        ),
+        "strategy_excess_absolute_return": (strategy_absolute - baseline_row["absolute_return"]),
         "strategy_excess_percentage_return": (
             strategy_percentage - baseline_row["percentage_return"]
         ),

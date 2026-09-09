@@ -48,7 +48,7 @@ class FakeSource:
                     "observed_at": "2026-08-14T12:00:00Z",
                     "source": "MinIO raw Parquet metadata",
                     "status": "stale",
-                }
+                },
             ],
             "research": {
                 "evaluation": {
@@ -141,7 +141,9 @@ def test_dashboard_renders_the_not_registered_state_and_escapes_artifacts() -> N
 
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
-def test_dashboard_rejects_mutating_methods_without_reading_a_source(method: str) -> None:
+def test_dashboard_rejects_mutating_methods_without_reading_a_source(
+    method: str,
+) -> None:
     source = FakeSource()
     with _server(source) as address:
         request = Request(address + "/api/status", data=b"{}", method=method)

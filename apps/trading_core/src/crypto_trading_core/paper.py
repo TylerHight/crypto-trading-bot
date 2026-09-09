@@ -174,9 +174,7 @@ def _sealed_spec_and_warmup(
     selection_digest = evaluation.get("selection_manifest_sha256")
     if not isinstance(selection_uri, str) or not isinstance(selection_digest, str):
         raise InvalidPaperTrading("evaluation does not pin its selection")
-    selection, _ = _read_json_manifest(
-        store, selection_uri, selection_digest, "selection manifest"
-    )
+    selection, _ = _read_json_manifest(store, selection_uri, selection_digest, "selection manifest")
     if (
         selection.get("selection_status") != "selected"
         or selection.get("execution_mode") != "simulation"
@@ -415,9 +413,7 @@ def _baseline_step(
             slippage_bps=session.spec.slippage_bps,
         )
         fee = fill.fee
-    equity = decimal38(
-        portfolio.cash + portfolio.base_quantity * candle.close, "baseline equity"
-    )
+    equity = decimal38(portfolio.cash + portfolio.base_quantity * candle.close, "baseline equity")
     peak = max(session.baseline_peak_equity or session.spec.starting_cash, equity)
     with localcontext() as context:
         context.prec = 114
@@ -594,10 +590,8 @@ def compute_paper_mutation(
             last_candle_time=candle.window_start,
             processed_candles=current.processed_candles + 1,
             decisions=current.decisions + int(step.decision is not None),
-            buys=current.buys
-            + int(step.fill is not None and step.fill.side is FillSide.BUY),
-            sells=current.sells
-            + int(step.fill is not None and step.fill.side is FillSide.SELL),
+            buys=current.buys + int(step.fill is not None and step.fill.side is FillSide.BUY),
+            sells=current.sells + int(step.fill is not None and step.fill.side is FillSide.SELL),
             total_fees=decimal38(
                 current.total_fees + (step.fill.fee if step.fill is not None else Decimal(0)),
                 "total_fees",
@@ -680,9 +674,9 @@ def process_paper_candles(
         )
     except (InvalidBacktestInput, OSError, ValueError) as error:
         raise InvalidPaperTrading(f"paper candle manifest is invalid: {error}") from error
-    if not is_local_uri(snapshot.output_uri) and not normalize_uri(
-        snapshot.output_uri
-    ).startswith(normalize_uri(settings.experiment.backtest.source_output_prefix) + "/"):
+    if not is_local_uri(snapshot.output_uri) and not normalize_uri(snapshot.output_uri).startswith(
+        normalize_uri(settings.experiment.backtest.source_output_prefix) + "/"
+    ):
         raise InvalidPaperTrading("paper candle output is outside the allowed prefix")
     minimum, maximum = _bounds(snapshot)
     processing_start = session.spec.processing_start
@@ -715,23 +709,17 @@ def process_paper_candles(
         raise InvalidPaperTrading(f"paper candles could not be loaded: {error}") from error
     warmup = tuple(candle for candle in candles if candle.window_start < load_start)
     forward_candles = tuple(candle for candle in candles if candle.window_start >= load_start)
-    warmup_valid = (
-        not needs_forward_warmup
-        or (
-            len(warmup) == warmup_count
-            and all(
-                candle.exchange == session.spec.exchange
-                and candle.symbol == session.spec.symbol
-                and candle.window_start
-                == load_start - timedelta(minutes=warmup_count - index)
-                for index, candle in enumerate(warmup)
-            )
+    warmup_valid = not needs_forward_warmup or (
+        len(warmup) == warmup_count
+        and all(
+            candle.exchange == session.spec.exchange
+            and candle.symbol == session.spec.symbol
+            and candle.window_start == load_start - timedelta(minutes=warmup_count - index)
+            for index, candle in enumerate(warmup)
         )
     )
     incomplete_publication = (
-        len(candles) != expected
-        or len(forward_candles) != expected_forward
-        or not warmup_valid
+        len(candles) != expected or len(forward_candles) != expected_forward or not warmup_valid
     )
     actual_command = validate_command_id(command_id or str(uuid4()))
     source = PaperCandleInput(
@@ -758,6 +746,7 @@ def process_paper_candles(
             discovered=len(forward_candles),
         )
     else:
+
         def mutator(
             current: PaperSession,
             existing: Mapping[object, StoredPaperCandle],
@@ -785,6 +774,7 @@ def process_paper_candles(
                 now=timestamp,
                 allow_cumulative_overlap=is_pilot,
             )
+
     return repository.execute(
         session_id,
         command_id=actual_command,
@@ -821,9 +811,7 @@ def set_paper_session_state(
         }
     )
 
-    def mutate(
-        session: PaperSession, _: Mapping[object, StoredPaperCandle]
-    ) -> PaperMutation:
+    def mutate(session: PaperSession, _: Mapping[object, StoredPaperCandle]) -> PaperMutation:
         allowed = {
             PaperSessionState.ACTIVE: {
                 PaperSessionState.PAUSED,
@@ -869,9 +857,7 @@ def paper_session_status(session_id: str, repository: PaperRepository) -> dict[s
     session_id = validate_session_id(session_id)
     session = repository.get_session(session_id)
     equity = (
-        session.current_equity
-        if session.current_equity is not None
-        else session.spec.starting_cash
+        session.current_equity if session.current_equity is not None else session.spec.starting_cash
     )
     baseline_equity = (
         session.baseline_equity
@@ -884,9 +870,7 @@ def paper_session_status(session_id: str, repository: PaperRepository) -> dict[s
             "ending_equity": baseline_equity,
             "fee": session.baseline_fee,
             "maximum_drawdown": session.baseline_maximum_drawdown,
-            "percentage_return": _ratio_percent(
-                baseline_equity, session.spec.starting_cash
-            ),
+            "percentage_return": _ratio_percent(baseline_equity, session.spec.starting_cash),
             "version": "buy-and-hold-long-only-v1",
         },
         "cash": session.strategy_state.portfolio.cash,

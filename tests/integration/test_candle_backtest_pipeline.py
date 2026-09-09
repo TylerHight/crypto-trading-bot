@@ -52,7 +52,9 @@ def _put_candle_snapshot(s3, root: str) -> tuple[str, str]:
                 "exchange": "coinbase",
                 "symbol": "BTC-USD",
                 "window_start": window_start.replace(tzinfo=None),
-                "window_end": (window_start + timedelta(minutes=1)).replace(tzinfo=None),
+                "window_end": (window_start + timedelta(minutes=1)).replace(
+                    tzinfo=None
+                ),
                 "open": price,
                 "high": price,
                 "low": price,
@@ -154,7 +156,9 @@ def _run(
 
 
 def _report(output: str) -> dict[str, object]:
-    lines = [line for line in output.splitlines() if line.startswith("BACKTEST_REPORT_JSON=")]
+    lines = [
+        line for line in output.splitlines() if line.startswith("BACKTEST_REPORT_JSON=")
+    ]
     assert len(lines) == 1, output
     return json.loads(lines[0].partition("=")[2])
 
@@ -230,7 +234,9 @@ def test_pinned_candles_produce_reproducible_s3_backtest() -> None:
         ).get("Contents", [])
         assert len(manifests) == 2
 
-        s3.put_object(Bucket="crypto-data", Key=fills_key, Body=fills_body + b"tampered")
+        s3.put_object(
+            Bucket="crypto-data", Key=fills_key, Body=fills_body + b"tampered"
+        )
         tampered = subprocess.run(
             [
                 sys.executable,

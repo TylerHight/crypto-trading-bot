@@ -39,7 +39,9 @@ def _event(trade_id: str, producer: str, price: str = "100.25") -> dict[str, obj
         "producer": producer,
         "trace_id": trace_id,
         "correlation_id": None,
-        "causation_id": str(uuid4()) if producer == "apps.historical_backfill" else None,
+        "causation_id": str(uuid4())
+        if producer == "apps.historical_backfill"
+        else None,
         "payload": {
             "trade_id": trade_id,
             "product_id": "BTC-USD",
@@ -68,7 +70,9 @@ def _raw_row(document: dict[str, object], offset: int) -> dict[str, object]:
     }
 
 
-def _run_job(report_uri: str, raw_uri: str, output_uri: str, quarantine_uri: str, apply: bool):
+def _run_job(
+    report_uri: str, raw_uri: str, output_uri: str, quarantine_uri: str, apply: bool
+):
     command = [
         "podman",
         "compose",
@@ -193,9 +197,12 @@ def test_bounded_minio_snapshot_is_deduplicated_quarantined_and_idempotent(
         assert dry_report["curated_logical_trades"] == 2
         assert dry_report["exact_duplicate_deliveries"] == 1
         assert dry_report["quarantined_input_rows"] == 1
-        assert s3.list_objects_v2(Bucket="crypto-data", Prefix=output_prefix).get(
-            "KeyCount", 0
-        ) == 0
+        assert (
+            s3.list_objects_v2(Bucket="crypto-data", Prefix=output_prefix).get(
+                "KeyCount", 0
+            )
+            == 0
+        )
 
         applied = _run_job(report_uri, raw_uri, output_uri, quarantine_uri, True)
         assert applied.returncode == 0, applied.stdout + applied.stderr
@@ -230,7 +237,9 @@ def test_bounded_minio_snapshot_is_deduplicated_quarantined_and_idempotent(
                     target_files = curated_files
                 elif "/quarantine/runs/" in key:
                     relative = key
-                    destination = local_quarantine / f"part-{len(quarantine_files)}.parquet"
+                    destination = (
+                        local_quarantine / f"part-{len(quarantine_files)}.parquet"
+                    )
                     target_files = quarantine_files
                 else:
                     continue
@@ -350,9 +359,12 @@ def test_conflicting_facts_publish_no_manifest_and_quarantine_every_delivery() -
             and "payload" not in json.dumps(sample)
             for sample in report["samples"]
         )
-        assert s3.list_objects_v2(
-            Bucket="crypto-data", Prefix=f"{output_prefix}/manifests/"
-        ).get("KeyCount", 0) == 0
+        assert (
+            s3.list_objects_v2(
+                Bucket="crypto-data", Prefix=f"{output_prefix}/manifests/"
+            ).get("KeyCount", 0)
+            == 0
+        )
         quarantine_rows = 0
         for page in s3.get_paginator("list_objects_v2").paginate(
             Bucket="crypto-data", Prefix=f"{quarantine_prefix}/runs/"

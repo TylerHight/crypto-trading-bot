@@ -15,7 +15,9 @@ from crypto_trading_core.paper_repository import PostgresPaperRepository
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Change a paper session lifecycle state.")
     parser.add_argument("--session-id", required=True)
-    parser.add_argument("--state", choices=[state.value for state in PaperSessionState], required=True)
+    parser.add_argument(
+        "--state", choices=[state.value for state in PaperSessionState], required=True
+    )
     parser.add_argument("--actor", required=True)
     parser.add_argument("--reason", required=True)
     parser.add_argument("--command-id")

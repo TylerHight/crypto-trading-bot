@@ -24,9 +24,7 @@ from crypto_trading_core.paper_contracts import (
     StoredPaperCandle,
 )
 
-PaperMutator = Callable[
-    [PaperSession, Mapping[object, StoredPaperCandle]], PaperMutation
-]
+PaperMutator = Callable[[PaperSession, Mapping[object, StoredPaperCandle]], PaperMutation]
 
 
 class PaperRepository(Protocol):
@@ -259,9 +257,7 @@ def _spec_from_document(value: dict[str, Any]) -> PaperSessionSpec:
         paper_schema_version=value["paper_schema_version"],
         pilot_id=value.get("pilot_id"),
         forward_start=(
-            _parse_time(value["forward_start"])
-            if value.get("forward_start") is not None
-            else None
+            _parse_time(value["forward_start"]) if value.get("forward_start") is not None else None
         ),
     )
 
@@ -275,7 +271,9 @@ def _portfolio_document(value: PortfolioState | None) -> dict[str, str] | None:
 def _portfolio_from_document(value: dict[str, str] | None) -> PortfolioState | None:
     if value is None:
         return None
-    return PortfolioState(cash=Decimal(value["cash"]), base_quantity=Decimal(value["base_quantity"]))
+    return PortfolioState(
+        cash=Decimal(value["cash"]), base_quantity=Decimal(value["base_quantity"])
+    )
 
 
 def _session_document(session: PaperSession) -> dict[str, Any]:

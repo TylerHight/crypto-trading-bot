@@ -46,11 +46,7 @@ def decimal38(
     positive: bool = False,
     allow_negative: bool = False,
 ) -> Decimal:
-    if (
-        not value.is_finite()
-        or (not allow_negative and value < 0)
-        or (positive and value <= 0)
-    ):
+    if not value.is_finite() or (not allow_negative and value < 0) or (positive and value <= 0):
         qualifier = "positive" if positive else "nonnegative"
         if allow_negative:
             raise InvalidPaperTrading(f"{field} must be finite")

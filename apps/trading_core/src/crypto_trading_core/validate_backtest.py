@@ -159,9 +159,9 @@ def validate_manifest(
         raise InvalidBacktestInput("source candle snapshot key changed")
     if manifest.get("candle_output_uri") != source.output_uri:
         raise InvalidBacktestInput("source candle output URI changed")
-    if not is_local_uri(source.output_uri) and not normalize_uri(
-        source.output_uri
-    ).startswith(normalize_uri(settings.source_output_prefix) + "/"):
+    if not is_local_uri(source.output_uri) and not normalize_uri(source.output_uri).startswith(
+        normalize_uri(settings.source_output_prefix) + "/"
+    ):
         raise InvalidBacktestInput("candle output is outside the allowed prefix")
 
     run_output_uri = manifest.get("run_output_uri")

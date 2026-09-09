@@ -1,5 +1,67 @@
 # Trading Core
 
+## Longer strategy research
+
+Run the fixed 90-day BTC experiment with `python -m crypto_trading_core.longer_research`.
+It first publishes a coverage report. Missing minutes (including warmup) stop
+selection and produce **inconclusive**. It never fills gaps with invented candles.
+If coverage passes, the existing engine selects using train and validation only,
+then evaluates the selected strategy against buy-and-hold after fees and slippage.
+
+The checked-in configuration is
+[`btc-usd-longer-research-v1.json`](../../experiments/btc-usd-longer-research-v1.json):
+60 train days, 15 validation days, and 15 test days ending September 8, 2026 UTC.
+It fixes SMA 5/20, 15/60, and 60/240, starting cash 10,000, fees 40 basis points,
+and slippage 5 basis points. These are research assumptions, not exchange quotes.
+
+For the existing local Python 3.11 environment, run from the repository root:
+
+```powershell
+$env:PYTHONPATH='apps/trading_core/src;packages/domain/src'
+$env:BACKTEST_S3_ENDPOINT='http://127.0.0.1:9000'
+$env:BACKTEST_S3_ACCESS_KEY='minioadmin'
+$env:BACKTEST_S3_SECRET_KEY='minioadmin'
+$researchDigest=(Get-FileHash experiments/btc-usd-longer-research-v1.json -Algorithm SHA256).Hash.ToLower()
+.venv311\Scripts\python.exe -m crypto_trading_core.longer_research --spec experiments/btc-usd-longer-research-v1.json --spec-sha256 $researchDigest --local-development
+```
+
+With the standard uv workspace setup, `uv run --all-packages run-longer-research`
+accepts the same arguments. `--local-development` permits the local configuration;
+output still defaults to local MinIO. Exit 2 means inconclusive or no candidate;
+exit 4 means rejected inputs. Exit 0 means evaluated, not necessarily recommended.
+
+Results live under `analytics/strategy_experiments/v1/longer_research/`:
+
+- `registrations/<name>.json` locks the configuration before candle inspection.
+- `runs/<key>/spec.json` preserves the exact configuration bytes.
+- `runs/<key>/coverage.json` pins candle and curated manifests, all candle file
+  SHA-256 hashes, and every missing minute as `[start, end)` UTC ranges with counts.
+- `engine/` contains the existing immutable selection and OOS publications.
+- `reports/<key>/manifest.json` links the evidence and gives the recommendation.
+  No-candidate and insufficient-data reports explicitly omit OOS results.
+
+Coverage reads timestamp and lineage columns only. It hashes and temporarily
+copies opaque Parquet bytes; this is not a claim that test files were never
+touched. Price queries during selection are restricted to dates before the test
+boundary. Evaluation uses the same frozen bytes. All new publications are
+append-only and checked by read-back. An identical rerun resolves the same result;
+changed inputs or a changed configuration under the same name are rejected.
+Use a new reviewed configuration/name for a new experiment; preserve this attempt
+and do not tune candidates against its test results.
+
+Open the dashboard at <http://127.0.0.1:8090>. Its top summary shows **Not enough
+data**, **No strategy selected**, or **Test complete**. A completed test shows the
+selected strategy, its return, buy-and-hold return, and the difference. A trial
+recommendation requires strictly positive excess return after costs. The dashboard
+and runner do not register, approve, or start a paper trial.
+
+On September 8 the real input had only **924 of 129,600 required BTC minutes** in
+the fixed window (926 BTC candles overall). The published result is inconclusive:
+**do not start a paper trial**. Prepare a complete historical publication before
+planning another experiment. The existing short SMA evaluation is preserved.
+
+## Original backtest workflow
+
 The first trading-core increment is a bounded, deterministic backtest. It reads
 one SHA-pinned one-minute candle publication, runs
 `sma-crossover-long-only-v1`, and publishes simulated decisions, next-open

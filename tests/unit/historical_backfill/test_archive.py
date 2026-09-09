@@ -105,29 +105,30 @@ def test_raw_archive_counts_an_exact_kafka_position(tmp_path: Path) -> None:
     table = pa.Table.from_pylist(rows)
     output = BytesIO()
     pq.write_table(table, output)
-    parquet_path = (
-        tmp_path
-        / "event_date=2026-08-25"
-        / "event_hour=14"
-        / "part.parquet"
-    )
+    parquet_path = tmp_path / "event_date=2026-08-25" / "event_hour=14" / "part.parquet"
     storage = ObjectStorage(StorageSettings())
     storage.write_bytes_append_only(
         str(parquet_path), output.getvalue(), content_type="application/octet-stream"
     )
     archive = RawParquetArchive(storage, str(tmp_path))
 
-    assert archive.count_position(
-        topic="market.trades.raw.v1",
-        partition=0,
-        offset=11,
-        start_at=START,
-        end_at=START + timedelta(minutes=1),
-    ) == 1
-    assert archive.count_position(
-        topic="market.trades.raw.v1",
-        partition=1,
-        offset=11,
-        start_at=START,
-        end_at=START + timedelta(minutes=1),
-    ) == 0
+    assert (
+        archive.count_position(
+            topic="market.trades.raw.v1",
+            partition=0,
+            offset=11,
+            start_at=START,
+            end_at=START + timedelta(minutes=1),
+        )
+        == 1
+    )
+    assert (
+        archive.count_position(
+            topic="market.trades.raw.v1",
+            partition=1,
+            offset=11,
+            start_at=START,
+            end_at=START + timedelta(minutes=1),
+        )
+        == 0
+    )

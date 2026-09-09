@@ -104,15 +104,65 @@ class LiveDashboardSource:
             "one_minute_candles": self._candle_artifact(now).document(),
         }
         research = self._research_status(now)
+        history = self._historical_status(now)
         draft_plan = self._draft_plan(now)
         return {
             "generated_at": _timestamp(now),
             "pipeline": [collector, raw_archive, storage, database],
             "pilot": pilot,
             "research": research,
+            "history": history,
             "trusted_data": trusted_data,
             "draft_plan": draft_plan,
-            "next_action": self._next_action(collector, raw_archive, storage, database, pilot, research),
+            "next_action": self._next_action(
+                collector, raw_archive, storage, database, pilot, research, history
+            ),
+        }
+
+    def _historical_status(self, now: datetime) -> dict[str, Any]:
+        artifact, document = self._read_latest_json(
+            "Historical BTC candles", self.settings.historical_manifest_prefix, now
+        )
+        if document is None:
+            return {"status": artifact.status, "publication": artifact.document()}
+        coverage = document.get("coverage")
+        if (
+            document.get("candle_schema_version") != "exchange-ohlcv-v1"
+            or document.get("source_kind") != "exchange_ohlcv"
+            or not isinstance(coverage, dict)
+            or not isinstance(coverage.get("missing_minutes"), int)
+        ):
+            return {"status": "invalid", "message": "Historical dataset metadata is invalid."}
+        expected = coverage.get("expected_minutes")
+        available = coverage.get("available_minutes")
+        ready = coverage.get("status") == "ready"
+        missing = coverage["missing_minutes"]
+        source_complete = (
+            isinstance(expected, int)
+            and isinstance(available, int)
+            and available + missing == expected
+            and not coverage.get("conflicting_minutes")
+        )
+        if not source_complete:
+            return {"status": "incomplete", "message": "Historical download is incomplete."}
+        return {
+            "status": "ready" if ready else "gaps_found",
+            "message": (
+                "Historical data is ready for research."
+                if ready
+                else f"Historical download is complete; Coinbase published no candle for {missing} minutes."
+            ),
+            "next_action": (
+                "Create a new fixed strategy experiment."
+                if ready
+                else "Define and test a gap-handling policy before strategy research."
+            ),
+            "coverage": {
+                "available_minutes": coverage.get("available_minutes"),
+                "expected_minutes": coverage.get("expected_minutes"),
+                "missing_minutes": missing,
+            },
+            "publication": artifact.document(),
         }
 
     def _source_status(
@@ -144,9 +194,7 @@ class LiveDashboardSource:
 
         if observed_at is None:
             return "unknown"
-        if now - observed_at > timedelta(
-            seconds=self.settings.artifact_stale_after_seconds
-        ):
+        if now - observed_at > timedelta(seconds=self.settings.artifact_stale_after_seconds):
             return "stale"
         return "healthy"
 
@@ -195,9 +243,13 @@ class LiveDashboardSource:
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda item: item.get("LastModified", datetime.min.replace(tzinfo=UTC)))
+        return max(
+            candidates, key=lambda item: item.get("LastModified", datetime.min.replace(tzinfo=UTC))
+        )
 
-    def _read_latest_json(self, name: str, prefix: str, now: datetime) -> tuple[Artifact, dict[str, Any] | None]:
+    def _read_latest_json(
+        self, name: str, prefix: str, now: datetime
+    ) -> tuple[Artifact, dict[str, Any] | None]:
         try:
             item = self._latest_object(prefix, suffix=".json")
         except Exception:  # noqa: BLE001 - an unavailable remote source is dashboard data.
@@ -344,7 +396,10 @@ class LiveDashboardSource:
                         value = json.loads(payload)
                     except (TypeError, UnicodeDecodeError, json.JSONDecodeError):
                         continue
-                    if isinstance(value, dict) and value.get("observation_type") == "health_summary":
+                    if (
+                        isinstance(value, dict)
+                        and value.get("observation_type") == "health_summary"
+                    ):
                         events.append(value)
             if not events:
                 return None
@@ -387,7 +442,9 @@ class LiveDashboardSource:
         )
 
     def _raw_integrity_artifact(self, now: datetime) -> Artifact:
-        artifact, document = self._read_latest_json("Raw integrity audit", self.settings.raw_audit_prefix, now)
+        artifact, document = self._read_latest_json(
+            "Raw integrity audit", self.settings.raw_audit_prefix, now
+        )
         if document is None:
             return artifact
         partitions = document.get("partitions")
@@ -404,10 +461,14 @@ class LiveDashboardSource:
             int(item.get("kafka_records", 0)) for item in partitions if isinstance(item, dict)
         )
         missing = sum(
-            int(item.get("missing_from_parquet", 0)) for item in partitions if isinstance(item, dict)
+            int(item.get("missing_from_parquet", 0))
+            for item in partitions
+            if isinstance(item, dict)
         )
         duplicates = sum(
-            int(item.get("duplicate_parquet_positions", 0)) for item in partitions if isinstance(item, dict)
+            int(item.get("duplicate_parquet_positions", 0))
+            for item in partitions
+            if isinstance(item, dict)
         )
         return Artifact(
             artifact.name,
@@ -467,6 +528,72 @@ class LiveDashboardSource:
         )
 
     def _research_status(self, now: datetime) -> dict[str, Any]:
+        publication, report = self._read_latest_json(
+            "Longer strategy research", self.settings.research_report_prefix, now
+        )
+        if report is not None:
+            summary = report.get("summary")
+            if (
+                report.get("version") != "longer-research-v1"
+                or report.get("status") != "published"
+                or not isinstance(summary, dict)
+                or summary.get("status") not in {"inconclusive", "no_candidate", "evaluated"}
+            ):
+                return {
+                    "status": "invalid",
+                    "explanation": "The research report could not be verified.",
+                }
+            if summary["status"] == "evaluated":
+                try:
+                    strategy_return = Decimal(str(summary["strategy_return"]))
+                    baseline_return = Decimal(str(summary["buy_and_hold_return"]))
+                    excess = Decimal(str(summary["excess_return"]))
+                    coverage = report["coverage_summary"]
+                    valid = (
+                        all(
+                            value.is_finite()
+                            for value in (strategy_return, baseline_return, excess)
+                        )
+                        and strategy_return - baseline_return == excess
+                        and coverage["status"] == "sufficient"
+                        and coverage["available_minutes"] >= 129600
+                        and coverage["missing_minutes"] == 0
+                        and bool(summary.get("selected_candidate"))
+                        and summary.get("paper_trial_supported") is (excess > 0)
+                    )
+                except (KeyError, TypeError, ValueError, ArithmeticError):
+                    valid = False
+                if not valid:
+                    return {
+                        "status": "invalid",
+                        "explanation": "The research comparison is incomplete or inconsistent.",
+                    }
+            elif summary.get("paper_trial_supported") is not False:
+                return {
+                    "status": "invalid",
+                    "explanation": "Incomplete research cannot support a paper trial.",
+                }
+            return {
+                "status": summary["status"],
+                "explanation": summary.get("message"),
+                "recommendation": summary.get("recommendation"),
+                "paper_trial_supported": summary.get("paper_trial_supported") is True,
+                "coverage": report.get("coverage_summary"),
+                "publication": publication.document(),
+                "oos": {
+                    "candidate": summary.get("selected_candidate"),
+                    "strategy_return": summary.get("strategy_return"),
+                    "buy_and_hold_return": summary.get("buy_and_hold_return"),
+                    "excess_return": summary.get("excess_return"),
+                }
+                if summary["status"] == "evaluated"
+                else None,
+            }
+        if publication.status not in {"missing"}:
+            return {
+                "status": publication.status,
+                "explanation": "Longer research could not be read. Check object storage.",
+            }
         selection, selection_document = self._read_latest_json(
             "Sealed candidate selection", self.settings.selection_manifest_prefix, now
         )
@@ -648,6 +775,7 @@ class LiveDashboardSource:
         database: Mapping[str, object],
         pilot: Mapping[str, object],
         research: Mapping[str, object],
+        history: Mapping[str, object],
     ) -> dict[str, str]:
         for item in (collector, raw_archive, storage, database):
             if item.get("status") in {"unavailable", "missing"}:
@@ -655,6 +783,26 @@ class LiveDashboardSource:
                     "action": "Investigate the unavailable data source before relying on newer evidence.",
                     "runbook": "docs/runbooks/local-market-data-pipeline.md",
                 }
+        if history.get("status") == "ready":
+            return {
+                "action": str(history.get("next_action")),
+                "runbook": "apps/historical_backfill/README.md#historical-research-candles",
+            }
+        if history.get("status") == "gaps_found":
+            return {
+                "action": str(history.get("next_action")),
+                "runbook": "apps/historical_backfill/README.md#historical-research-candles",
+            }
+        if research.get("recommendation"):
+            return {
+                "action": str(research["recommendation"])
+                + (
+                    " Prepare 90 complete days of BTC candles."
+                    if research.get("status") == "inconclusive"
+                    else ""
+                ),
+                "runbook": "apps/trading_core/README.md#longer-strategy-research",
+            }
         if pilot.get("status") == "not_registered":
             return {
                 "action": "Review the sealed OOS result and explicitly approve or decline the paper-only pilot.",

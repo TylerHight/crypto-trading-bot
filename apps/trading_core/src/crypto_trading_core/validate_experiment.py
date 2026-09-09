@@ -75,10 +75,10 @@ def _selection_location(
 ) -> None:
     if is_local_uri(manifest_uri):
         if not local_development:
-            raise InvalidBacktestInput("local experiment validation requires local-development mode")
-    elif not normalize_uri(manifest_uri).startswith(
-        normalize_uri(settings.output_prefix) + "/"
-    ):
+            raise InvalidBacktestInput(
+                "local experiment validation requires local-development mode"
+            )
+    elif not normalize_uri(manifest_uri).startswith(normalize_uri(settings.output_prefix) + "/"):
         raise InvalidBacktestInput("experiment manifest is outside the allowed prefix")
 
 
@@ -114,20 +114,12 @@ def validate_selection(
     baseline_body = _artifact_body(
         storage, artifacts["baseline_results.parquet"], "baseline results"
     )
-    summary_body = _artifact_body(
-        storage, artifacts["selection_summary.json"], "selection summary"
-    )
-    candidate_table = _table(
-        candidate_body, CANDIDATE_RESULT_SCHEMA, "candidate results"
-    )
-    baseline_table = _table(
-        baseline_body, BASELINE_RESULT_SCHEMA, "baseline results"
-    )
+    summary_body = _artifact_body(storage, artifacts["selection_summary.json"], "selection summary")
+    candidate_table = _table(candidate_body, CANDIDATE_RESULT_SCHEMA, "candidate results")
+    baseline_table = _table(baseline_body, BASELINE_RESULT_SCHEMA, "baseline results")
     if (
-        artifacts["candidate_results.parquet"].get("rows")
-        != candidate_table.num_rows
-        or artifacts["baseline_results.parquet"].get("rows")
-        != baseline_table.num_rows
+        artifacts["candidate_results.parquet"].get("rows") != candidate_table.num_rows
+        or artifacts["baseline_results.parquet"].get("rows") != baseline_table.num_rows
     ):
         raise InvalidBacktestInput("selection artifact row count changed")
     if artifacts["selection_summary.json"].get("rows") != 1:
@@ -143,9 +135,7 @@ def validate_selection(
     policy = SelectionPolicy(
         minimum_train_fills=int(policy_value["minimum_train_fills"]),
         maximum_train_drawdown=_decimal(policy_value["maximum_train_drawdown"]),
-        maximum_validation_drawdown=_decimal(
-            policy_value["maximum_validation_drawdown"]
-        ),
+        maximum_validation_drawdown=_decimal(policy_value["maximum_validation_drawdown"]),
     )
     candidate_rows = candidate_table.to_pylist()
     if any(row["range_name"] not in {"train", "validation"} for row in candidate_rows):
@@ -167,8 +157,7 @@ def validate_selection(
         raise InvalidBacktestInput("selection ranking or evidence does not reproduce")
     selected_value = manifest.get("selected_candidate")
     if (selected_value is None) != (selected is None) or (
-        isinstance(selected_value, dict)
-        and selected_value.get("candidate_id") != selected
+        isinstance(selected_value, dict) and selected_value.get("candidate_id") != selected
     ):
         raise InvalidBacktestInput("sealed selected candidate does not match ranking")
 
@@ -195,9 +184,7 @@ def validate_selection(
         allowed_spec_prefix=settings.spec_prefix,
         local_development=local_development,
         maximum_candidates=settings.maximum_candidates,
-        maximum_candidate_candle_evaluations=(
-            settings.maximum_candidate_candle_evaluations
-        ),
+        maximum_candidate_candle_evaluations=(settings.maximum_candidate_candle_evaluations),
     )
     source = _source(spec, settings, storage, local_development=local_development)
     if selection_key(spec, source) != manifest.get("selection_key"):
@@ -283,9 +270,7 @@ def validate_evaluation(
     }
     if not isinstance(artifacts, dict) or set(artifacts) != expected_names:
         raise InvalidBacktestInput("evaluation artifact inventory is incomplete")
-    bodies = {
-        name: _artifact_body(storage, artifacts[name], name) for name in expected_names
-    }
+    bodies = {name: _artifact_body(storage, artifacts[name], name) for name in expected_names}
     if artifacts["comparison.json"].get("rows") != 1:
         raise InvalidBacktestInput("evaluation comparison row count must be one")
 
@@ -296,9 +281,7 @@ def validate_evaluation(
         allowed_spec_prefix=settings.spec_prefix,
         local_development=local_development,
         maximum_candidates=settings.maximum_candidates,
-        maximum_candidate_candle_evaluations=(
-            settings.maximum_candidate_candle_evaluations
-        ),
+        maximum_candidate_candle_evaluations=(settings.maximum_candidate_candle_evaluations),
     )
     source = _source(spec, settings, storage, local_development=local_development)
     baseline_row, baseline_result = _baseline_row(
@@ -330,12 +313,10 @@ def validate_evaluation(
         "strategy_backtest_manifest_sha256": hashlib.sha256(strategy_body).hexdigest(),
         "strategy_backtest_manifest_uri": strategy_uri,
         "strategy_excess_absolute_return": (
-            _decimal(strategy_summary["absolute_return"])
-            - baseline_row["absolute_return"]
+            _decimal(strategy_summary["absolute_return"]) - baseline_row["absolute_return"]
         ),
         "strategy_excess_percentage_return": (
-            _decimal(strategy_summary["percentage_return"])
-            - baseline_row["percentage_return"]
+            _decimal(strategy_summary["percentage_return"]) - baseline_row["percentage_return"]
         ),
         "test_range": spec.test.as_dict(),
     }

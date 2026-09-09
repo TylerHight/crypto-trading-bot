@@ -75,9 +75,7 @@ def test_kafka_record_is_archived_and_retained_snapshot_passes_audit() -> None:
 
     s3 = boto3.client(
         "s3",
-        endpoint_url=os.getenv(
-            "INTEGRATION_S3_ENDPOINT", "http://127.0.0.1:9000"
-        ),
+        endpoint_url=os.getenv("INTEGRATION_S3_ENDPOINT", "http://127.0.0.1:9000"),
         aws_access_key_id="minioadmin",
         aws_secret_access_key="minioadmin",
         region_name="us-east-1",
@@ -156,10 +154,7 @@ def test_kafka_record_is_archived_and_retained_snapshot_passes_audit() -> None:
                 "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.8,"
                 "org.apache.hadoop:hadoop-aws:3.3.4"
             ),
-            (
-                "/opt/spark/work-dir/jobs/spark/entrypoints/"
-                "audit_raw_market_trades.py"
-            ),
+            ("/opt/spark/work-dir/jobs/spark/entrypoints/audit_raw_market_trades.py"),
         ],
         check=False,
         capture_output=True,
@@ -178,7 +173,8 @@ def test_kafka_record_is_archived_and_retained_snapshot_passes_audit() -> None:
     assert report["status"] == "passed"
     assert any(
         partition["kafka_partition"] == expected_identity[1]
-        and partition["earliest_offset"] <= expected_identity[2]
+        and partition["earliest_offset"]
+        <= expected_identity[2]
         < partition["ending_offset_exclusive"]
         for partition in report["partitions"]
     )

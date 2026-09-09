@@ -18,8 +18,10 @@ def test_supported_python_runtime_is_consistent_across_build_and_ci() -> None:
     runtime = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
 
     assert runtime in {"3.11", "3.12"}
-    assert (ROOT / "Dockerfile").read_text(encoding="utf-8").startswith(
-        f"FROM python:{runtime}-slim\n"
+    assert (
+        (ROOT / "Dockerfile")
+        .read_text(encoding="utf-8")
+        .startswith(f"FROM python:{runtime}-slim\n")
     )
     assert f'python-version: "{runtime}"' in (
         ROOT / ".github/workflows/ci.yml"

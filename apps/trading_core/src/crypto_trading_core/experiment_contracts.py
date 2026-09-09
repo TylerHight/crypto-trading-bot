@@ -68,9 +68,7 @@ class SelectionPolicy:
     def as_dict(self) -> dict[str, str | int]:
         return {
             "maximum_train_drawdown": _decimal_text(self.maximum_train_drawdown),
-            "maximum_validation_drawdown": _decimal_text(
-                self.maximum_validation_drawdown
-            ),
+            "maximum_validation_drawdown": _decimal_text(self.maximum_validation_drawdown),
             "minimum_train_fills": self.minimum_train_fills,
         }
 
@@ -272,9 +270,7 @@ def load_experiment_spec(
         "selection_policy",
     )
     policy = SelectionPolicy(
-        minimum_train_fills=_integer(
-            raw_policy.get("minimum_train_fills"), "minimum_train_fills"
-        ),
+        minimum_train_fills=_integer(raw_policy.get("minimum_train_fills"), "minimum_train_fills"),
         maximum_train_drawdown=_decimal(
             raw_policy.get("maximum_train_drawdown"), "maximum_train_drawdown"
         ),
@@ -331,9 +327,7 @@ def load_experiment_spec(
     )
 
 
-def selection_identity(
-    spec: ExperimentSpec, source: PublishedCandleSnapshot
-) -> dict[str, Any]:
+def selection_identity(spec: ExperimentSpec, source: PublishedCandleSnapshot) -> dict[str, Any]:
     return {
         "backtest_engine_version": BACKTEST_ENGINE_VERSION,
         "baseline_version": BASELINE_VERSION,

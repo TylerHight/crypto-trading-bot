@@ -24,7 +24,9 @@ class FakeS3:
         self.documents = documents
         self.calls: list[str] = []
 
-    def list_objects_v2(self, *, Bucket: str, Prefix: str = "", MaxKeys: int = 1000) -> dict[str, Any]:
+    def list_objects_v2(
+        self, *, Bucket: str, Prefix: str = "", MaxKeys: int = 1000
+    ) -> dict[str, Any]:
         self.calls.append("list")
         objects = [
             {"Key": key, "LastModified": NOW}
@@ -59,7 +61,9 @@ class FakeConnection:
 
 
 class PartitionedRawS3(FakeS3):
-    def list_objects_v2(self, *, Bucket: str, Prefix: str = "", MaxKeys: int = 1000) -> dict[str, Any]:
+    def list_objects_v2(
+        self, *, Bucket: str, Prefix: str = "", MaxKeys: int = 1000
+    ) -> dict[str, Any]:
         if Prefix == "raw/":
             self.calls.append("list")
             return {
@@ -136,7 +140,9 @@ def _documents() -> dict[str, bytes]:
     }
 
 
-def test_live_source_reads_only_safe_metadata_and_reports_no_registered_pilot(tmp_path: Path) -> None:
+def test_live_source_reads_only_safe_metadata_and_reports_no_registered_pilot(
+    tmp_path: Path,
+) -> None:
     plan = tmp_path / "pilot.json"
     plan.write_text(
         json.dumps(
@@ -176,7 +182,9 @@ def test_live_source_reads_only_safe_metadata_and_reports_no_registered_pilot(tm
 
     assert snapshot["pipeline"][0]["status"] == "healthy"
     assert snapshot["trusted_data"]["raw_integrity"]["details"]["Kafka records"] == "12"
-    assert snapshot["trusted_data"]["curated_trades"]["details"]["Logical trades"] == "10"
+    assert (
+        snapshot["trusted_data"]["curated_trades"]["details"]["Logical trades"] == "10"
+    )
     assert snapshot["research"]["oos"]["excess_return"] == "0.010000000000000000"
     assert snapshot["pilot"]["status"] == "not_registered"
     assert snapshot["pilot"].get("metrics") is None
@@ -184,7 +192,9 @@ def test_live_source_reads_only_safe_metadata_and_reports_no_registered_pilot(tm
     assert snapshot["next_action"]["action"].startswith("Review the sealed OOS")
     assert all(call in {"get", "list"} for call in storage.calls)
     assert connection.queries[0] == "BEGIN READ ONLY"
-    assert all("INSERT" not in query and "UPDATE" not in query for query in connection.queries)
+    assert all(
+        "INSERT" not in query and "UPDATE" not in query for query in connection.queries
+    )
 
 
 def test_live_source_marks_old_evidence_stale(tmp_path: Path) -> None:
@@ -214,11 +224,13 @@ def test_live_source_marks_old_evidence_stale(tmp_path: Path) -> None:
     assert snapshot["draft_plan"]["status"] == "missing"
 
 
-def test_live_source_checks_recent_raw_hour_partitions_before_old_global_page(tmp_path: Path) -> None:
+def test_live_source_checks_recent_raw_hour_partitions_before_old_global_page(
+    tmp_path: Path,
+) -> None:
     documents = _documents()
-    documents[
-        "raw/event_date=2026-09-04/event_hour=12/current.parquet"
-    ] = b"current-parquet"
+    documents["raw/event_date=2026-09-04/event_hour=12/current.parquet"] = (
+        b"current-parquet"
+    )
     storage = PartitionedRawS3(documents)
     source = LiveDashboardSource(
         DashboardSettings(

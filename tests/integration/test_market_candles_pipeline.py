@@ -46,7 +46,9 @@ def _curated_row(
         "producer": producer,
         "trace_id": str(uuid4()),
         "correlation_id": None,
-        "causation_id": str(uuid4()) if producer == "apps.historical_backfill" else None,
+        "causation_id": str(uuid4())
+        if producer == "apps.historical_backfill"
+        else None,
         "kafka_topic": "market.trades.raw.v1",
         "kafka_partition": 0,
         "kafka_offset": offset,
@@ -103,7 +105,9 @@ def _run_job(
 
 
 def _report(output: str) -> dict[str, object]:
-    lines = [line for line in output.splitlines() if line.startswith("CANDLE_REPORT_JSON=")]
+    lines = [
+        line for line in output.splitlines() if line.startswith("CANDLE_REPORT_JSON=")
+    ]
     assert len(lines) == 1, output
     return json.loads(lines[0].partition("=")[2])
 
@@ -228,9 +232,7 @@ def test_curated_snapshot_builds_exact_idempotent_minute_candles(
         curated_manifest, separators=(",", ":"), sort_keys=True
     ).encode()
     manifest_sha256 = hashlib.sha256(manifest_body).hexdigest()
-    s3.put_object(
-        Bucket="crypto-data", Key=curated_manifest_key, Body=manifest_body
-    )
+    s3.put_object(Bucket="crypto-data", Key=curated_manifest_key, Body=manifest_body)
     manifest_uri = f"s3a://crypto-data/{curated_manifest_key}"
     output_uri = f"s3a://crypto-data/{candle_prefix}"
 
@@ -248,9 +250,12 @@ def test_curated_snapshot_builds_exact_idempotent_minute_candles(
         assert dry_report["source_curated_trades"] == 5
         assert dry_report["candle_count"] == 3
         assert dry_report["trade_count_sum"] == 5
-        assert s3.list_objects_v2(
-            Bucket="crypto-data", Prefix=f"{candle_prefix}/runs/"
-        ).get("KeyCount", 0) == 0
+        assert (
+            s3.list_objects_v2(
+                Bucket="crypto-data", Prefix=f"{candle_prefix}/runs/"
+            ).get("KeyCount", 0)
+            == 0
+        )
 
         applied = _run_job(
             manifest_uri,
@@ -314,7 +319,9 @@ def test_curated_snapshot_builds_exact_idempotent_minute_candles(
             """
         ).fetchall()
         assert len(candles) == 3
-        btc_first = next(row for row in candles if row[0] == "BTC-USD" and row[1].minute == 0)
+        btc_first = next(
+            row for row in candles if row[0] == "BTC-USD" and row[1].minute == 0
+        )
         assert btc_first[2:6] == (
             Decimal("90.000000000000000000"),
             Decimal("110.000000000000000000"),
@@ -327,7 +334,9 @@ def test_curated_snapshot_builds_exact_idempotent_minute_candles(
             Decimal("97.500000000000000000"),
             3,
         )
-        historical = next(row for row in candles if row[0] == "BTC-USD" and row[1].minute == 1)
+        historical = next(
+            row for row in candles if row[0] == "BTC-USD" and row[1].minute == 1
+        )
         assert historical[10] == 1
 
         local_manifest = {

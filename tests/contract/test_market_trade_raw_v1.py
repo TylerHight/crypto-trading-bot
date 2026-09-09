@@ -15,9 +15,7 @@ def validator() -> Draft202012Validator:
 
 
 def valid_fixture(name: str = "valid-example.json") -> dict[str, object]:
-    return json.loads(
-        (CONTRACT_DIRECTORY / name).read_text(encoding="utf-8")
-    )
+    return json.loads((CONTRACT_DIRECTORY / name).read_text(encoding="utf-8"))
 
 
 def test_valid_fixture_matches_json_schema() -> None:

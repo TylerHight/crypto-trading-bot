@@ -96,9 +96,14 @@ def _session(plan) -> PaperSession:
         forward_start=plan.start_not_before,
     )
     warmup = Candle(
-        exchange="coinbase", symbol="BTC-USD",
-        window_start=START - timedelta(minutes=1), window_end=START,
-        open=Decimal(10), high=Decimal(10), low=Decimal(10), close=Decimal(10),
+        exchange="coinbase",
+        symbol="BTC-USD",
+        window_start=START - timedelta(minutes=1),
+        window_end=START,
+        open=Decimal(10),
+        high=Decimal(10),
+        low=Decimal(10),
+        close=Decimal(10),
     )
     return PaperSession(
         spec=spec,
@@ -161,7 +166,8 @@ def test_pilot_lifecycle_is_restart_safe_serialized_and_immutable() -> None:
     )
     store = ObjectStorage(storage_settings)
     s3 = boto3.client(
-        "s3", endpoint_url=storage_settings.endpoint_url,
+        "s3",
+        endpoint_url=storage_settings.endpoint_url,
         aws_access_key_id=storage_settings.access_key,
         aws_secret_access_key=storage_settings.secret_key,
         region_name="us-east-1",
@@ -171,12 +177,21 @@ def test_pilot_lifecycle_is_restart_safe_serialized_and_immutable() -> None:
     repository.migrate()
     plan = _plan(root)
     session = _session(plan)
-    paper.create_session(session, command_id="create-pilot-integration", payload_digest="f" * 64)
-    assert paper.get_session(session.session_id).spec.forward_start == plan.start_not_before
+    paper.create_session(
+        session, command_id="create-pilot-integration", payload_digest="f" * 64
+    )
+    assert (
+        paper.get_session(session.session_id).spec.forward_start
+        == plan.start_not_before
+    )
     pilot = Pilot(
-        plan=plan, session_id=session.session_id, state=PilotState.REGISTERED,
-        approved_by="integration-test", approval_note="Accelerated integration pilot",
-        created_at=START - timedelta(minutes=1), local_development=False,
+        plan=plan,
+        session_id=session.session_id,
+        state=PilotState.REGISTERED,
+        approved_by="integration-test",
+        approval_note="Accelerated integration pilot",
+        created_at=START - timedelta(minutes=1),
+        local_development=False,
     )
     manifest_uri = f"s3a://crypto-data/{root}/cycle.json"
     manifest_body = b'{"fixture":"immutable-candle-publication"}'
@@ -190,26 +205,39 @@ def test_pilot_lifecycle_is_restart_safe_serialized_and_immutable() -> None:
         assert stored.pilot_id == pilot.pilot_id
 
         candle = Candle(
-            exchange="coinbase", symbol="BTC-USD", window_start=START,
-            window_end=START + timedelta(minutes=1), open=Decimal(11),
-            high=Decimal(11), low=Decimal(11), close=Decimal(11),
+            exchange="coinbase",
+            symbol="BTC-USD",
+            window_start=START,
+            window_end=START + timedelta(minutes=1),
+            open=Decimal(11),
+            high=Decimal(11),
+            low=Decimal(11),
+            close=Decimal(11),
         )
 
         def run(index: int):
             source = PaperCandleInput(
-                manifest_uri=manifest_uri, manifest_sha256=manifest_sha256,
-                snapshot_key="2" * 64, command_id=f"paper-cycle-{index}",
+                manifest_uri=manifest_uri,
+                manifest_sha256=manifest_sha256,
+                snapshot_key="2" * 64,
+                command_id=f"paper-cycle-{index}",
             )
             return PostgresPilotRepository(
                 PostgresPaperRepository(database_url, transaction_timeout_seconds=10)
             ).run_cycle(
-                pilot.pilot_id, command_id=f"pilot-cycle-{index}",
+                pilot.pilot_id,
+                command_id=f"pilot-cycle-{index}",
                 payload_digest=hashlib.sha256(str(index).encode()).hexdigest(),
-                manifest_uri=manifest_uri, manifest_sha256=manifest_sha256, now=START,
+                manifest_uri=manifest_uri,
+                manifest_sha256=manifest_sha256,
+                now=START,
                 runner=lambda: paper.execute(
-                    session.session_id, command_id=source.command_id,
-                    payload_digest=source.manifest_sha256, actor="paper-system",
-                    action="process_candles", reason="accelerated integration cycle",
+                    session.session_id,
+                    command_id=source.command_id,
+                    payload_digest=source.manifest_sha256,
+                    actor="paper-system",
+                    action="process_candles",
+                    reason="accelerated integration cycle",
                     mutator=lambda current, existing: compute_paper_mutation(
                         current, existing, (candle,), source, now=START
                     ),
@@ -227,20 +255,31 @@ def test_pilot_lifecycle_is_restart_safe_serialized_and_immutable() -> None:
             PostgresPaperRepository(database_url, transaction_timeout_seconds=10)
         )
         snapshot = report_paper_pilot(
-            pilot.pilot_id, START + timedelta(days=1),
+            pilot.pilot_id,
+            START + timedelta(days=1),
             settings=_settings(storage_settings, root, database_url),
-            paper_repository=paper, pilot_repository=restarted, store=store,
+            paper_repository=paper,
+            pilot_repository=restarted,
+            store=store,
             now=START + timedelta(days=1),
         )
-        assert validate_pilot_publication(
-            snapshot["manifest_uri"], snapshot["manifest_sha256"], store=store,
-            expected_kind="paper_pilot_snapshot",
-        )["status"] == "valid"
+        assert (
+            validate_pilot_publication(
+                snapshot["manifest_uri"],
+                snapshot["manifest_sha256"],
+                store=store,
+                expected_kind="paper_pilot_snapshot",
+            )["status"]
+            == "valid"
+        )
         assessment = finalize_paper_pilot(
-            pilot.pilot_id, reviewed_by="integration-test",
+            pilot.pilot_id,
+            reviewed_by="integration-test",
             review_note="Reviewed accelerated PostgreSQL and MinIO evidence",
             settings=_settings(storage_settings, root, database_url),
-            paper_repository=paper, pilot_repository=restarted, store=store,
+            paper_repository=paper,
+            pilot_repository=restarted,
+            store=store,
             now=START + timedelta(days=8),
         )
         assert assessment["verdict"] == "pass"
@@ -250,16 +289,27 @@ def test_pilot_lifecycle_is_restart_safe_serialized_and_immutable() -> None:
     finally:
         with psycopg.connect(database_url) as connection:
             for table in (
-                "paper_pilot_snapshots", "paper_pilot_cycles", "paper_pilot_commands",
-                "paper_pilots", "paper_session_events", "paper_equity", "paper_fills",
-                "paper_decisions", "paper_candle_inputs", "paper_sessions",
+                "paper_pilot_snapshots",
+                "paper_pilot_cycles",
+                "paper_pilot_commands",
+                "paper_pilots",
+                "paper_session_events",
+                "paper_equity",
+                "paper_fills",
+                "paper_decisions",
+                "paper_candle_inputs",
+                "paper_sessions",
             ):
-                id_column = "pilot_id" if table.startswith("paper_pilot") else "session_id"
+                id_column = (
+                    "pilot_id" if table.startswith("paper_pilot") else "session_id"
+                )
                 connection.execute(
                     f"DELETE FROM {table} WHERE {id_column} = %s",
                     [pilot.pilot_id if id_column == "pilot_id" else session.session_id],
                 )
-        objects = s3.list_objects_v2(Bucket="crypto-data", Prefix=root).get("Contents", [])
+        objects = s3.list_objects_v2(Bucket="crypto-data", Prefix=root).get(
+            "Contents", []
+        )
         if objects:
             s3.delete_objects(
                 Bucket="crypto-data",

@@ -16,6 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
+prepare-historical-candles = "crypto_historical_backfill.historical_candles:main"
 backfill-coinbase-trades = "crypto_historical_backfill.backfill_coinbase_trades:main"
 reconcile-coinbase-trades = "crypto_historical_backfill.reconcile_coinbase_trades:main"
 

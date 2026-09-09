@@ -31,11 +31,15 @@ BACKFILL_RUN_ID = UUID("8b3a4086-f5cf-4c10-90ae-3dbeb56398cc")
 KEY = "coinbase:BTC-USD:2026-08-25T14:00:00Z:2026-08-25T14:01:00Z:v3"
 
 
-def finding(trade_id: str, *, symbol: str = "BTC-USD", second: int = 1) -> dict[str, str]:
+def finding(
+    trade_id: str, *, symbol: str = "BTC-USD", second: int = 1
+) -> dict[str, str]:
     return {
         "symbol": symbol,
         "source_event_id": trade_id,
-        "event_time": (START + timedelta(seconds=second)).isoformat().replace("+00:00", "Z"),
+        "event_time": (START + timedelta(seconds=second))
+        .isoformat()
+        .replace("+00:00", "Z"),
     }
 
 
@@ -305,16 +309,22 @@ def test_source_change_and_already_archived_do_not_publish(tmp_path: Path) -> No
     )
 
     assert changed["status"] == "unresolved"
-    assert changed["samples"]["unresolved_source_changed"][0]["source_event_id"] == "one"
+    assert (
+        changed["samples"]["unresolved_source_changed"][0]["source_event_id"] == "one"
+    )
     assert skipped["status"] == "resolved_no_action_needed"
     assert publisher.events == []
 
 
-def test_apply_publishes_canonical_event_and_verifies_exact_position(tmp_path: Path) -> None:
+def test_apply_publishes_canonical_event_and_verifies_exact_position(
+    tmp_path: Path,
+) -> None:
     _, value = load(tmp_path / "input")
     acknowledged_at = datetime(2026, 8, 26, 16, 5, tzinfo=UTC)
     receipt = KafkaReceipt("market.trades.raw.v1", 2, 99, acknowledged_at)
-    archive = FakeArchive(positions={(receipt.topic, receipt.partition, receipt.offset): 1})
+    archive = FakeArchive(
+        positions={(receipt.topic, receipt.partition, receipt.offset): 1}
+    )
     publisher = FakePublisher([receipt])
 
     result = service(tmp_path, archive, publisher).run(
@@ -330,7 +340,9 @@ def test_apply_publishes_canonical_event_and_verifies_exact_position(tmp_path: P
     assert event.producer == "apps.historical_backfill"
     assert event.source_sequence is None
     assert event.causation_id == RECONCILIATION_RUN_ID
-    assert archive.position_queries == [(receipt.topic, receipt.partition, receipt.offset)]
+    assert archive.position_queries == [
+        (receipt.topic, receipt.partition, receipt.offset)
+    ]
     assert archive.position_windows == [
         (
             acknowledged_at - timedelta(minutes=5),
@@ -402,13 +414,17 @@ def test_missing_acknowledgement_is_ambiguous(tmp_path: Path) -> None:
     assert result["ambiguous"] == 1
 
 
-def test_success_and_failure_is_partial_and_samples_are_safe_and_capped(tmp_path: Path) -> None:
+def test_success_and_failure_is_partial_and_samples_are_safe_and_capped(
+    tmp_path: Path,
+) -> None:
     _, value = load(
         tmp_path / "input", findings=[finding("one"), finding("two", second=2)]
     )
     receipt = KafkaReceipt("market.trades.raw.v1", 0, 8)
     publisher = FakePublisher([receipt, RetryablePublicationError("known failure")])
-    archive = FakeArchive(positions={(receipt.topic, receipt.partition, receipt.offset): 1})
+    archive = FakeArchive(
+        positions={(receipt.topic, receipt.partition, receipt.offset): 1}
+    )
 
     result = service(tmp_path, archive, publisher, sample_limit=1).run(
         value, coverage(trade("one"), trade("two", second=2)), apply=True
@@ -430,4 +446,6 @@ def test_btc_and_eth_claims_are_independent(tmp_path: Path) -> None:
     )
     state = BackfillStateStore(storage, str(tmp_path / "state"))
 
-    assert state.identity_token(btc, btc.findings[0]) != state.identity_token(eth, eth.findings[0])
+    assert state.identity_token(btc, btc.findings[0]) != state.identity_token(
+        eth, eth.findings[0]
+    )

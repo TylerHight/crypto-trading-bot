@@ -22,6 +22,8 @@ from jobs.spark.transforms.market_candles import (
 
 CREATED_AT = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
 SNAPSHOT_KEY = "a" * 64
+
+
 def manifest_bytes(**changes) -> bytes:
     value = {
         "status": "published",
@@ -233,12 +235,16 @@ def test_candles_use_event_time_and_deterministic_kafka_tie_breaker(spark) -> No
     ]
     frame = spark.createDataFrame(list(reversed(rows)), CURATED_MARKET_TRADE_SCHEMA)
 
-    candles = aggregate_market_candles(
-        frame.repartition(3),
-        interval="1m",
-        source_snapshot_key=SNAPSHOT_KEY,
-        created_at=CREATED_AT,
-    ).orderBy("symbol", "window_start").collect()
+    candles = (
+        aggregate_market_candles(
+            frame.repartition(3),
+            interval="1m",
+            source_snapshot_key=SNAPSHOT_KEY,
+            created_at=CREATED_AT,
+        )
+        .orderBy("symbol", "window_start")
+        .collect()
+    )
 
     assert len(candles) == 3
     btc_first = next(

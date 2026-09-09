@@ -24,7 +24,9 @@ def _escape(value: object) -> str:
 
 def _status_class(value: object) -> str:
     status = _text(value).lower().replace("_", "-")
-    return "status-" + "".join(character for character in status if character.isalnum() or character == "-")
+    return "status-" + "".join(
+        character for character in status if character.isalnum() or character == "-"
+    )
 
 
 def _status_badge(value: object) -> str:
@@ -62,7 +64,7 @@ def _artifact_card(artifact: Mapping[str, Any]) -> str:
         (
             '<article class="card">',
             f"<h3>{_escape(artifact.get('name'))} {_status_badge(artifact.get('status'))}</h3>",
-            f"<p class=\"muted\">{_escape(artifact.get('source'))}</p>",
+            f'<p class="muted">{_escape(artifact.get("source"))}</p>',
             f"<p>Observed: {_escape(artifact.get('observed_at'))}</p>",
             _details(artifact.get("details")),
             _copyable("Canonical URI", artifact.get("uri")),
@@ -139,7 +141,11 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
         else []
     )
     research = snapshot.get("research")
-    research_status = _text(research.get("status")) if isinstance(research, Mapping) else "unavailable"
+    research_status = (
+        _text(research.get("status")) if isinstance(research, Mapping) else "unavailable"
+    )
+    history = snapshot.get("history")
+    history_status = _text(history.get("status")) if isinstance(history, Mapping) else "missing"
     pilot = snapshot.get("pilot")
     pilot_status = _text(pilot.get("status")) if isinstance(pilot, Mapping) else "unavailable"
     collector_status = _text(collector.get("status"))
@@ -147,11 +153,14 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
     stale_artifacts = [item for item in trusted_items if item.get("status") == "stale"]
     oos = research.get("oos") if isinstance(research, Mapping) else None
     research_detail = "No saved result"
+    if isinstance(research, Mapping) and research.get("explanation"):
+        research_detail = _text(research.get("explanation"))
     if isinstance(oos, Mapping):
         research_detail = (
             f"{_candidate_name(oos.get('candidate'))}: "
             f"{_percentage(oos.get('strategy_return'))} vs "
-            f"{_percentage(oos.get('buy_and_hold_return'))}"
+            f"{_percentage(oos.get('buy_and_hold_return'))} buy-and-hold. "
+            f"Difference: {_percentage(oos.get('excess_return'))}."
         )
     actions: list[str] = []
     if collector_status in {"unavailable", "missing", "invalid", "failed"}:
@@ -161,15 +170,40 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
     if stale_artifacts:
         actions.append("Then publish new audit, trade, and candle reports.")
     if pilot_status == "not_registered":
-        actions.append("Then decide: start the paper trial or stop here.")
+        if isinstance(research, Mapping) and research.get("recommendation"):
+            actions.append(_text(research.get("recommendation")))
+            if research_status == "inconclusive":
+                if history_status == "gaps_found":
+                    actions.append(
+                        "Define and test how strategy research should handle the five Coinbase outage minutes."
+                    )
+                elif history_status == "ready":
+                    actions.append("Create a new fixed experiment using the historical dataset.")
+                else:
+                    actions.append(
+                        "Prepare 90 days of BTC history, then run a new fixed experiment."
+                    )
+        else:
+            actions.append("Review strategy evidence before considering a paper trial.")
     action_list = "".join(f"<li>{_escape(action)}</li>" for action in actions)
     if not action_list:
         action_list = "<li>Nothing needs attention now.</li>"
     collector_detail = _text(collector.get("detail"))
     raw_detail = f"Latest archive: {_short_date(raw_archive.get('observed_at'))}"
     research_label = "Saved result" if research_status in {"current", "stale"} else research_status
+    research_label = {
+        "inconclusive": "Not enough data",
+        "no_candidate": "No strategy selected",
+        "evaluated": "Test complete",
+    }.get(research_status, research_label)
     research_state = "historical" if research_label == "Saved result" else research_status
     pilot_label = "Not started" if pilot_status == "not_registered" else pilot_status
+    history_detail = (
+        _text(history.get("message")) if isinstance(history, Mapping) else "No historical dataset"
+    )
+    history_label = {"ready": "Ready", "gaps_found": "5 source gaps"}.get(
+        history_status, history_status
+    )
     return "".join(
         (
             '<section class="operator-summary">',
@@ -177,9 +211,20 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
             f'<ol class="summary-actions">{action_list}</ol>',
             '<div class="overview-grid">',
             _overview_card("Live feed", collector_status, collector_status, collector_detail),
-            _overview_card("Data files", "Needs update" if raw_status == "stale" else raw_status, raw_status, raw_detail),
+            _overview_card(
+                "Data files",
+                "Needs update" if raw_status == "stale" else raw_status,
+                raw_status,
+                raw_detail,
+            ),
+            _overview_card("Historical data", history_label, history_status, history_detail),
             _overview_card("Research", research_label, research_state, research_detail),
-            _overview_card("Paper trial", pilot_label, pilot_status, "Approval required" if pilot_status == "not_registered" else "Forward test"),
+            _overview_card(
+                "Paper trial",
+                pilot_label,
+                pilot_status,
+                "Approval required" if pilot_status == "not_registered" else "Forward test",
+            ),
             "</div>",
             "</section>",
         )
@@ -190,6 +235,22 @@ def _research_view(research: Mapping[str, Any]) -> str:
     selection = research.get("selection")
     evaluation = research.get("evaluation")
     detail_cards = ""
+    publication = research.get("publication")
+    if isinstance(publication, Mapping):
+        detail_cards += _artifact_card(publication)
+    coverage = research.get("coverage")
+    if isinstance(coverage, Mapping):
+        detail_cards += (
+            '<article class="card"><h3>History coverage</h3>'
+            + _details(
+                {
+                    "Available minutes": coverage.get("available_minutes"),
+                    "Required minutes": coverage.get("expected_minutes"),
+                    "Missing minutes": coverage.get("missing_minutes"),
+                }
+            )
+            + "</article>"
+        )
     if isinstance(selection, Mapping):
         detail_cards += _artifact_card(selection)
     if isinstance(evaluation, Mapping):
@@ -229,6 +290,7 @@ def _research_view(research: Mapping[str, Any]) -> str:
     )
     return (
         f"<p>{_escape(research.get('explanation'))}</p>"
+        f"<p>{_escape(research.get('recommendation', ''))}</p>"
         f"<p>Research status: {_status_badge(research.get('status'))}</p>"
         '<article class="card research-summary"><h3>Out-of-sample comparison</h3>'
         f"{_details(summary)}</article>"
@@ -248,7 +310,7 @@ def _pilot_view(pilot: Mapping[str, Any], draft_plan: Mapping[str, Any]) -> str:
             (
                 f"<p>{_status_badge(status)} {_escape(pilot.get('message'))}</p>",
                 "<p>No balance, fills, or assessment are shown because no pilot exists.</p>",
-                "<article class=\"card\"><h3>Draft pre-registered plan</h3>",
+                '<article class="card"><h3>Draft pre-registered plan</h3>',
                 f"{_status_badge(draft_plan.get('status')) if isinstance(draft_plan, Mapping) else ''}",
                 plan,
                 digest,
@@ -327,10 +389,10 @@ def render_dashboard(snapshot: Mapping[str, Any], refresh_seconds: int) -> str:
   <main>
     <h1>Crypto platform operator dashboard</h1>
     <p class="muted">Read only. No real orders.</p>
-    <p class="muted">Updated: {_escape(snapshot.get('generated_at'))}. Refreshes every {refresh_seconds} seconds.</p>
+    <p class="muted">Updated: {_escape(snapshot.get("generated_at"))}. Refreshes every {refresh_seconds} seconds.</p>
     {_operator_summary(snapshot)}
     <details class="disclosure section-details"><summary>Pipeline details</summary>{_pipeline_table(pipeline_items)}</details>
-    <details class="disclosure section-details"><summary>Data details</summary><p class="muted">Old means the saved evidence is older than the freshness window. It may still be valid.</p><div class="grid">{''.join(_artifact_card(item) for item in artifacts)}</div></details>
+    <details class="disclosure section-details"><summary>Data details</summary><p class="muted">Old means the saved evidence is older than the freshness window. It may still be valid.</p><div class="grid">{"".join(_artifact_card(item) for item in artifacts)}</div></details>
     <details class="disclosure section-details"><summary>Research details</summary>{_research_view(research)}</details>
     <details class="disclosure section-details"><summary>Paper trial details</summary>{_pilot_view(pilot, draft_plan)}</details>
   </main>

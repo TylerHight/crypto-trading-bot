@@ -50,10 +50,7 @@ EQUITY_SCHEMA = pa.schema(
 
 
 def _enum_values(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value.value if hasattr(value, "value") else value
-        for key, value in row.items()
-    }
+    return {key: value.value if hasattr(value, "value") else value for key, value in row.items()}
 
 
 def result_tables(result: BacktestResult) -> dict[str, pa.Table]:

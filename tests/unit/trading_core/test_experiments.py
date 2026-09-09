@@ -90,7 +90,9 @@ def _candle_snapshot(tmp_path: Path) -> tuple[Path, str]:
             / f"event_hour={event_hour}"
         )
         partition.mkdir(parents=True)
-        pq.write_table(pa.Table.from_pylist(rows, schema=schema), partition / "part.parquet")
+        pq.write_table(
+            pa.Table.from_pylist(rows, schema=schema), partition / "part.parquet"
+        )
     manifest = {
         "candle_count": len(prices),
         "candle_output_uri": str(run),
@@ -166,9 +168,13 @@ def _settings(tmp_path: Path) -> ExperimentSettings:
     )
 
 
-def test_spec_is_strict_and_candidate_order_has_one_canonical_identity(tmp_path: Path) -> None:
+def test_spec_is_strict_and_candidate_order_has_one_canonical_identity(
+    tmp_path: Path,
+) -> None:
     manifest, digest = _candle_snapshot(tmp_path)
-    first_body = json.dumps(_spec_document(manifest, digest), separators=(",", ":")).encode()
+    first_body = json.dumps(
+        _spec_document(manifest, digest), separators=(",", ":")
+    ).encode()
     second_body = json.dumps(
         _spec_document(manifest, digest, reverse=True), separators=(",", ":")
     ).encode()
@@ -202,7 +208,9 @@ def test_spec_is_strict_and_candidate_order_has_one_canonical_identity(tmp_path:
         )
 
 
-def test_duplicate_candidates_ranges_and_resource_caps_are_rejected(tmp_path: Path) -> None:
+def test_duplicate_candidates_ranges_and_resource_caps_are_rejected(
+    tmp_path: Path,
+) -> None:
     manifest, digest = _candle_snapshot(tmp_path)
     base = _spec_document(manifest, digest)
     invalid_documents = []
@@ -397,7 +405,9 @@ def test_prepare_never_requests_test_candles_and_evaluation_has_no_overrides(
     assert repeated["status"] == "resolved_existing_evaluation"
 
 
-def test_no_eligible_candidate_is_sealed_and_cannot_be_evaluated(tmp_path: Path) -> None:
+def test_no_eligible_candidate_is_sealed_and_cannot_be_evaluated(
+    tmp_path: Path,
+) -> None:
     manifest, digest = _candle_snapshot(tmp_path)
     document = _spec_document(manifest, digest)
     document["selection_policy"]["minimum_train_fills"] = 100

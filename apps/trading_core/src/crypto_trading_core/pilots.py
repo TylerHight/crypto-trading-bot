@@ -130,7 +130,12 @@ def validate_pilot_publication(
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise InvalidPaperTrading("pilot publication manifest is invalid UTF-8 JSON") from error
     if not isinstance(manifest, dict) or set(manifest) != {
-        "artifact", "identity", "kind", "manifest_uri", "pilot_schema_version", "status"
+        "artifact",
+        "identity",
+        "kind",
+        "manifest_uri",
+        "pilot_schema_version",
+        "status",
     }:
         raise InvalidPaperTrading("pilot publication manifest fields are invalid")
     if (
@@ -156,22 +161,50 @@ def validate_pilot_publication(
         raise InvalidPaperTrading("pilot artifact identity does not match its manifest")
     required_fields = {
         "paper_pilot_registration": {
-            "approval", "created_at", "evaluation_manifest_sha256",
-            "evaluation_manifest_uri", "execution_mode", "pilot_id", "plan",
-            "plan_canonical_sha256", "plan_raw_artifact", "plan_raw_sha256",
-            "session_id", "state",
+            "approval",
+            "created_at",
+            "evaluation_manifest_sha256",
+            "evaluation_manifest_uri",
+            "execution_mode",
+            "pilot_id",
+            "plan",
+            "plan_canonical_sha256",
+            "plan_raw_artifact",
+            "plan_raw_sha256",
+            "session_id",
+            "state",
         },
         "paper_pilot_snapshot": {
-            "as_of", "assessment_policy_version", "criteria",
-            "evaluation_manifest_sha256", "execution_mode", "interim_only", "metrics",
-            "observation_start", "paper_engine_version", "paper_schema_version",
-            "pilot_id", "pilot_state", "plan_canonical_sha256", "plan_raw_sha256",
-            "selection_manifest_sha256", "session_id",
+            "as_of",
+            "assessment_policy_version",
+            "criteria",
+            "evaluation_manifest_sha256",
+            "execution_mode",
+            "interim_only",
+            "metrics",
+            "observation_start",
+            "paper_engine_version",
+            "paper_schema_version",
+            "pilot_id",
+            "pilot_state",
+            "plan_canonical_sha256",
+            "plan_raw_sha256",
+            "selection_manifest_sha256",
+            "session_id",
         },
         "paper_pilot_assessment": {
-            "assessment_policy_version", "criteria", "eligibility", "execution_mode",
-            "finalized_at", "live_trading_enabled", "metrics", "operator", "pilot_id",
-            "session_id", "terminal_stop", "verdict",
+            "assessment_policy_version",
+            "criteria",
+            "eligibility",
+            "execution_mode",
+            "finalized_at",
+            "live_trading_enabled",
+            "metrics",
+            "operator",
+            "pilot_id",
+            "session_id",
+            "terminal_stop",
+            "verdict",
         },
     }
     expected_fields = required_fields.get(str(manifest["kind"]))
@@ -286,14 +319,16 @@ def start_paper_pilot(
         created_at=timestamp,
         local_development=local_development,
     )
-    payload_digest = _digest({
-        "action": "register",
-        "approval_note": note,
-        "approved_by": actor,
-        "local_development": local_development,
-        "pilot_id": pilot.pilot_id,
-        "session_id": pilot.session_id,
-    })
+    payload_digest = _digest(
+        {
+            "action": "register",
+            "approval_note": note,
+            "approved_by": actor,
+            "local_development": local_development,
+            "pilot_id": pilot.pilot_id,
+            "session_id": pilot.session_id,
+        }
+    )
     stored, created = pilot_repository.create_pilot(
         pilot, command_id=actual_command, payload_digest=payload_digest
     )
@@ -364,9 +399,7 @@ def run_paper_pilot_cycle(
     first, last = _bounds(snapshot)
     session = paper_repository.get_session(pilot.session_id)
     if session.last_candle_time is None:
-        warmup_start = pilot.plan.start_not_before - timedelta(
-            minutes=session.spec.slow_period - 1
-        )
+        warmup_start = pilot.plan.start_not_before - timedelta(minutes=session.spec.slow_period - 1)
         if first > warmup_start:
             raise InvalidPaperTrading("first candle publication does not cover forward warm-up")
         if last <= pilot.plan.start_not_before:
@@ -374,13 +407,15 @@ def run_paper_pilot_cycle(
     timestamp = (now or datetime.now(UTC)).astimezone(UTC)
     if timestamp < pilot.plan.start_not_before:
         raise InvalidPaperTrading("paper pilot has not reached start_not_before")
-    payload_digest = _digest({
-        "action": "cycle",
-        "manifest_sha256": candle_manifest_sha256,
-        "manifest_uri": candle_manifest_uri,
-        "pilot_id": pilot_id,
-        "snapshot_key": snapshot.snapshot_key,
-    })
+    payload_digest = _digest(
+        {
+            "action": "cycle",
+            "manifest_sha256": candle_manifest_sha256,
+            "manifest_uri": candle_manifest_uri,
+            "pilot_id": pilot_id,
+            "snapshot_key": snapshot.snapshot_key,
+        }
+    )
 
     def runner() -> dict[str, object]:
         kwargs: dict[str, Any] = {}
@@ -414,9 +449,7 @@ def run_paper_pilot_cycle(
 def _criteria(plan: PilotPlan, metrics: dict[str, Any]) -> dict[str, dict[str, Any]]:
     values = {
         "calendar_days": (metrics["calendar_days"], plan.minimum_calendar_days, ">="),
-        "processed_candles": (
-            metrics["processed_candles"], plan.minimum_processed_candles, ">="
-        ),
+        "processed_candles": (metrics["processed_candles"], plan.minimum_processed_candles, ">="),
         "fills": (metrics["fills"], plan.minimum_fills, ">="),
         "maximum_drawdown": (metrics["maximum_drawdown"], plan.maximum_drawdown, "<="),
         "excess_return_over_buy_and_hold": (
@@ -424,15 +457,9 @@ def _criteria(plan: PilotPlan, metrics: dict[str, Any]) -> dict[str, dict[str, A
             plan.minimum_excess_return_over_buy_and_hold,
             ">=",
         ),
-        "data_gap_events": (
-            metrics["data_gap_events"], plan.maximum_data_gap_events, "<="
-        ),
-        "conflict_events": (
-            metrics["conflict_events"], plan.maximum_conflict_events, "<="
-        ),
-        "unplanned_pauses": (
-            metrics["unplanned_pauses"], plan.maximum_unplanned_pauses, "<="
-        ),
+        "data_gap_events": (metrics["data_gap_events"], plan.maximum_data_gap_events, "<="),
+        "conflict_events": (metrics["conflict_events"], plan.maximum_conflict_events, "<="),
+        "unplanned_pauses": (metrics["unplanned_pauses"], plan.maximum_unplanned_pauses, "<="),
     }
     return {
         name: {
@@ -452,7 +479,12 @@ def pilot_snapshot_document(
     paper_repository: PaperRepository,
     pilot_repository: PilotRepository,
 ) -> dict[str, Any]:
-    if as_of.tzinfo is None or as_of.utcoffset() != timedelta(0) or as_of.second or as_of.microsecond:
+    if (
+        as_of.tzinfo is None
+        or as_of.utcoffset() != timedelta(0)
+        or as_of.second
+        or as_of.microsecond
+    ):
         raise InvalidPaperTrading("snapshot as-of must be an aligned UTC minute")
     as_of = as_of.astimezone(UTC)
     if as_of < pilot.plan.start_not_before:
@@ -617,9 +649,7 @@ def finalize_paper_pilot(
             "status": "resolved_existing_assessment",
         }
     timestamp = (now or datetime.now(UTC)).astimezone(UTC).replace(second=0, microsecond=0)
-    evidence_available = _verify_evidence(
-        pilot, pilot_repository=pilot_repository, store=storage
-    )
+    evidence_available = _verify_evidence(pilot, pilot_repository=pilot_repository, store=storage)
     snapshot = pilot_snapshot_document(
         pilot,
         as_of=timestamp,
@@ -634,9 +664,7 @@ def finalize_paper_pilot(
         "threshold": True,
     }
     paper_status = paper_session_status(pilot.session_id, paper_repository)
-    definitive = {
-        "maximum_drawdown", "data_gap_events", "conflict_events", "unplanned_pauses"
-    }
+    definitive = {"maximum_drawdown", "data_gap_events", "conflict_events", "unplanned_pauses"}
     terminal_stop = (
         paper_status["state"] == PaperSessionState.STOPPED.value
         and paper_status["last_state_reason"] != "pilot_finalized"
@@ -645,9 +673,12 @@ def finalize_paper_pilot(
     minimum_end = pilot.plan.start_not_before + timedelta(days=pilot.plan.minimum_calendar_days)
     if timestamp < minimum_end and not hard_failure:
         raise InvalidPaperTrading("pilot observation window has not reached its minimum duration")
-    incomplete = any(
-        not criteria[name]["passes"] for name in ("calendar_days", "processed_candles", "fills")
-    ) or not evidence_available
+    incomplete = (
+        any(
+            not criteria[name]["passes"] for name in ("calendar_days", "processed_candles", "fills")
+        )
+        or not evidence_available
+    )
     if hard_failure or (
         not incomplete and not criteria["excess_return_over_buy_and_hold"]["passes"]
     ):
@@ -662,7 +693,9 @@ def finalize_paper_pilot(
     assessment = {
         "assessment_policy_version": ASSESSMENT_POLICY_VERSION,
         "criteria": criteria,
-        "eligibility": "eligible_for_execution_design_review" if verdict == "pass" else "not_eligible",
+        "eligibility": "eligible_for_execution_design_review"
+        if verdict == "pass"
+        else "not_eligible",
         "execution_mode": "paper_simulation",
         "finalized_at": timestamp,
         "live_trading_enabled": False,
@@ -687,12 +720,14 @@ def finalize_paper_pilot(
         },
     )
     actual_command = validate_command_id(command_id or f"finalize-{pilot_id[:24]}")
-    payload_digest = _digest({
-        "action": "finalize",
-        "assessment_sha256": publication["artifact_sha256"],
-        "operator": assessment["operator"],
-        "pilot_id": pilot_id,
-    })
+    payload_digest = _digest(
+        {
+            "action": "finalize",
+            "assessment_sha256": publication["artifact_sha256"],
+            "operator": assessment["operator"],
+            "pilot_id": pilot_id,
+        }
+    )
     if paper_status["state"] != PaperSessionState.STOPPED.value:
         set_paper_session_state(
             pilot.session_id,

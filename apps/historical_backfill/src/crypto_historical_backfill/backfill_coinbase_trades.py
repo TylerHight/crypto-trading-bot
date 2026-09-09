@@ -65,15 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--state-output",
-        default=os.getenv(
-            "BACKFILL_STATE_OUTPUT", "s3a://crypto-data/backfill/coinbase-trades"
-        ),
+        default=os.getenv("BACKFILL_STATE_OUTPUT", "s3a://crypto-data/backfill/coinbase-trades"),
     )
     parser.add_argument(
         "--raw-input",
-        default=os.getenv(
-            "RECONCILIATION_RAW_INPUT", "s3a://crypto-data/raw/market_trade_raw/v1"
-        ),
+        default=os.getenv("RECONCILIATION_RAW_INPUT", "s3a://crypto-data/raw/market_trade_raw/v1"),
     )
     parser.add_argument(
         "--maximum-window-seconds",
@@ -219,6 +215,7 @@ def run(argv: Sequence[str] | None = None) -> int:
     try:
         coverage = client.fetch_interval(value.symbol, value.start_at, value.end_at)
         archive = RawParquetArchive(storage, args.raw_input)
+
         def publisher_factory() -> AcknowledgedKafkaPublisher:
             return AcknowledgedKafkaPublisher(
                 bootstrap_servers=bootstrap_servers,
