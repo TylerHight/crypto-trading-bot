@@ -18,6 +18,8 @@ dependencies = [
 
 [project.scripts]
 run-longer-research = "crypto_trading_core.longer_research:main"
+record-gap-policy-review = "crypto_trading_core.gap_policy_review:main"
+run-gap-aware-research = "crypto_trading_core.gap_aware_research:main"
 backtest-market-candles = "crypto_trading_core.backtest:main"
 create-paper-session = "crypto_trading_core.create_paper_session:main"
 evaluate-strategy-experiment = "crypto_trading_core.evaluate_experiment:main"

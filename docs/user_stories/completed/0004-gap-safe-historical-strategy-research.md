@@ -96,5 +96,5 @@ The real report preserved all five Coinbase gaps and recorded **107,517**
 selection-valid minutes and **21,600** test-valid minutes. Its report SHA-256 is
 `edc14ea22c7ee0a63d2651a59b18471b7cdb8a6629e4b9cba70395bee5fb46fe`.
 Focused policy, research, and dashboard tests passed, along with lint and type
-checks. A future story must be separately reviewed before it can implement a
-gap-aware selection engine.
+checks. Story 0005 records the required human decision before any separately
+reviewed gap-aware selection engine can be considered.

@@ -128,6 +128,42 @@ def test_gap_policy_review_is_the_dashboard_next_action():
     assert action["action"] == "Review the gap-safe policy before strategy selection."
 
 
+def test_dashboard_renders_gap_aware_result_as_research_only():
+    report = {
+        "version": "gap-aware-sealed-research-v1",
+        "status": "published",
+        "research_only": True,
+        "test_prices_accessed_before_selection": False,
+        "segments": {"train": [{}, {}], "validation": [{}], "test": [{}, {}]},
+        "gap_policy": {"sha256": "a" * 64},
+        "summary": {
+            "status": "segmented_evaluated",
+            "selected_candidate": {"candidate_id": "sma-15-60"},
+            "strategy_return": "0.03",
+            "buy_and_hold_return": "0.02",
+            "excess_return": "0.01",
+            "paper_trial_supported": False,
+            "recommendation": "Review segmented research; it does not support a paper trial by itself.",
+            "message": "Independent source segments were evaluated with resets at every gap.",
+        },
+    }
+    documents = _documents()
+    documents["gap-aware/reports/manifest.json"] = _body(report)
+    source = LiveDashboardSource(
+        DashboardSettings(gap_aware_research_prefix="gap-aware/reports/"),
+        s3_client=FakeS3(documents),
+    )
+
+    research = source._research_status(NOW)
+
+    assert research["status"] == "segmented_evaluated"
+    assert research["paper_trial_supported"] is False
+    assert research["segment_counts"] == {"train": 2, "validation": 1, "test": 2}
+    page = _research_view(research)
+    assert "Source segments" in page
+    assert "Each segment resets SMA" in page
+
+
 def test_corrupt_report_does_not_fall_back_to_old_result():
     source = _source(_report())
     source._s3_client.documents["research/reports/manifest.json"] = b"not json"

@@ -20,9 +20,9 @@ and slippage 5 basis points. These are research assumptions, not exchange quotes
 pins the completed historical Coinbase dataset and
 [`btc-usd-gap-safe-policy-v1.json`](../../experiments/btc-usd-gap-safe-policy-v1.json).
 The policy records the five source gaps, resets an SMA window after each one,
-and never creates a replacement candle. It is intentionally marked
-`pending_human_review`: the runner publishes coverage but does not select a
-strategy, inspect test prices, or recommend a paper trial.
+and never creates a replacement candle. Its document remains
+`pending_human_review`; a separate immutable review record contains the named
+human approval. That approval authorizes only the gap-aware runner below.
 
 ```powershell
 $env:PYTHONPATH='apps/trading_core/src;packages/domain/src'
@@ -38,6 +38,41 @@ $gapSafeDigest=(Get-FileHash experiments/btc-usd-gap-safe-research-v1.json -Algo
 The expected exit is `2`: it means the safety gate worked, not that a strategy
 failed. Review the immutable report in the dashboard before authorizing any
 future, separately implemented selection workflow.
+
+### Approved gap-aware selection
+
+`run-gap-aware-research` is the separate implementation authorized by the
+approval. It runs each continuous source segment independently: the SMA,
+pending order, simulated cash, and return all reset at a source gap. It locks
+the train/validation selection before it can read test prices. Its aggregate is
+an unweighted mean of independently simulated valid-segment returns, not a
+continuously tradable return, and it never enables a paper trial.
+
+```powershell
+$env:PYTHONPATH='apps/trading_core/src;packages/domain/src'
+$env:BACKTEST_S3_ENDPOINT='http://127.0.0.1:9000'
+$env:BACKTEST_S3_ACCESS_KEY='minioadmin'
+$env:BACKTEST_S3_SECRET_KEY='minioadmin'
+$env:BACKTEST_CANDLE_MANIFEST_PREFIX='s3a://crypto-data/analytics/historical_candles/v1/manifests'
+$env:BACKTEST_CANDLE_OUTPUT_PREFIX='s3a://crypto-data/analytics/historical_candles/v1/runs'
+$digest=(Get-FileHash experiments/btc-usd-gap-safe-research-v1.json -Algorithm SHA256).Hash.ToLowerInvariant()
+.venv\Scripts\python.exe -m crypto_trading_core.gap_aware_research `
+  --spec experiments/btc-usd-gap-safe-research-v1.json --spec-sha256 $digest `
+  --review s3a://crypto-data/analytics/strategy_experiments/v1/gap_policy_reviews/reviews/15803b4cb7a9eb99fa378678ffba5e52a490ac8f5b85d60e3155bc7d0396b6c4/manifest.json `
+  --review-sha256 b646dbc787b758838135d9a258cbf6ff4c45ba970c9e7bc17eed5a56c3cd4afa `
+  --local-development
+```
+
+The September 9, 2026 run is sealed at
+`analytics/strategy_experiments/v1/gap_aware_research/reports/f9eaeaff0636f86fa1a1440367637b646c5e302ecbbfcad903ead4f72e827ef3/manifest.json`.
+No candidate passed its unchanged train/validation selection thresholds, so it
+does not have an OOS result and no test prices were accessed.
+
+To record a named human approval or rejection of that exact policy, use
+`record-gap-policy-review`. It verifies the hashes of the policy, report,
+coverage, source manifest, and source gaps before writing one append-only
+decision record. An approval still does not run strategy selection or a paper
+trial.
 
 For the existing local Python 3.11 environment, run from the repository root:
 

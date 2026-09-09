@@ -174,6 +174,8 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
             actions.append(_text(research.get("recommendation")))
             if research_status == "policy_review_required":
                 actions.append("Review the gap-safe policy before strategy selection.")
+            elif research_status == "gap_policy_approved":
+                actions.append("Implement and validate the gap-aware selection engine.")
             elif research_status == "inconclusive":
                 if history_status == "gaps_found":
                     actions.append(
@@ -196,8 +198,11 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
     research_label = {
         "inconclusive": "Not enough data",
         "policy_review_required": "Policy review needed",
+        "gap_policy_approved": "Policy approved",
+        "gap_policy_rejected": "Policy rejected",
         "no_candidate": "No strategy selected",
         "evaluated": "Test complete",
+        "segmented_evaluated": "Segmented research complete",
     }.get(research_status, research_label)
     research_state = "historical" if research_label == "Saved result" else research_status
     pilot_label = "Not started" if pilot_status == "not_registered" else pilot_status
@@ -255,6 +260,20 @@ def _research_view(research: Mapping[str, Any]) -> str:
             + "</article>"
         )
     gap_policy = research.get("gap_policy")
+    segment_counts = research.get("segment_counts")
+    if isinstance(segment_counts, Mapping):
+        detail_cards += (
+            '<article class="card"><h3>Source segments</h3>'
+            + _details(
+                {
+                    "Train": segment_counts.get("train"),
+                    "Validation": segment_counts.get("validation"),
+                    "Test": segment_counts.get("test"),
+                    "Meaning": "Each segment resets SMA, orders, and simulated cash.",
+                }
+            )
+            + "</article>"
+        )
     valid_minutes = research.get("policy_valid_minutes_by_range")
     if isinstance(gap_policy, Mapping):
         detail_cards += (
@@ -270,6 +289,20 @@ def _research_view(research: Mapping[str, Any]) -> str:
                     "Test-valid minutes": (
                         valid_minutes.get("test") if isinstance(valid_minutes, Mapping) else None
                     ),
+                }
+            )
+            + "</article>"
+        )
+    review = research.get("review")
+    if isinstance(review, Mapping):
+        detail_cards += (
+            '<article class="card"><h3>Human review</h3>'
+            + _details(
+                {
+                    "Decision": review.get("decision"),
+                    "Reviewer": review.get("reviewer"),
+                    "Time": review.get("decided_at"),
+                    "Reason": review.get("note"),
                 }
             )
             + "</article>"

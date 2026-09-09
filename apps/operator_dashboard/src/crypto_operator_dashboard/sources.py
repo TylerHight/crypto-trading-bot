@@ -528,6 +528,63 @@ class LiveDashboardSource:
         )
 
     def _research_status(self, now: datetime) -> dict[str, Any]:
+        segmented_publication, segmented = self._read_latest_json(
+            "Gap-aware sealed research", self.settings.gap_aware_research_prefix, now
+        )
+        if segmented is not None:
+            summary = segmented.get("summary")
+            if (
+                segmented.get("version") != "gap-aware-sealed-research-v1"
+                or segmented.get("status") != "published"
+                or segmented.get("research_only") is not True
+                or segmented.get("test_prices_accessed_before_selection") is not False
+                or not isinstance(summary, dict)
+                or summary.get("status") not in {"no_candidate", "segmented_evaluated"}
+                or summary.get("paper_trial_supported") is not False
+            ):
+                return {
+                    "status": "invalid",
+                    "explanation": "The gap-aware research report could not be verified.",
+                }
+            segmented_result: dict[str, Any] = {
+                "status": summary["status"],
+                "explanation": summary.get("message"),
+                "recommendation": summary.get("recommendation"),
+                "paper_trial_supported": False,
+                "publication": segmented_publication.document(),
+                "gap_policy": segmented.get("gap_policy"),
+                "segment_counts": {
+                    name: len(values)
+                    for name, values in segmented.get("segments", {}).items()
+                    if isinstance(name, str) and isinstance(values, list)
+                },
+                "research_only": True,
+                "oos": None,
+            }
+            if summary["status"] == "segmented_evaluated":
+                try:
+                    strategy_return = Decimal(str(summary["strategy_return"]))
+                    baseline_return = Decimal(str(summary["buy_and_hold_return"]))
+                    excess = Decimal(str(summary["excess_return"]))
+                    if not all(value.is_finite() for value in (strategy_return, baseline_return, excess)) or strategy_return - baseline_return != excess:
+                        raise ValueError("invalid comparison")
+                    segmented_result["oos"] = {
+                        "candidate": summary.get("selected_candidate"),
+                        "strategy_return": summary.get("strategy_return"),
+                        "buy_and_hold_return": summary.get("buy_and_hold_return"),
+                        "excess_return": summary.get("excess_return"),
+                    }
+                except (KeyError, TypeError, ValueError, ArithmeticError):
+                    return {
+                        "status": "invalid",
+                        "explanation": "The segmented research comparison is inconsistent.",
+                    }
+            return segmented_result
+        if segmented_publication.status not in {"missing"}:
+            return {
+                "status": segmented_publication.status,
+                "explanation": "Gap-aware research could not be read. Check object storage.",
+            }
         publication, report = self._read_latest_json(
             "Longer strategy research", self.settings.research_report_prefix, now
         )
@@ -574,7 +631,7 @@ class LiveDashboardSource:
                     "status": "invalid",
                     "explanation": "Incomplete research cannot support a paper trial.",
                 }
-            return {
+            report_result = {
                 "status": summary["status"],
                 "explanation": summary.get("message"),
                 "recommendation": summary.get("recommendation"),
@@ -592,6 +649,55 @@ class LiveDashboardSource:
                 if summary["status"] == "evaluated"
                 else None,
             }
+            if summary["status"] == "policy_review_required":
+                review_artifact, review = self._read_latest_json(
+                    "Historical gap-policy review", self.settings.gap_policy_review_prefix, now
+                )
+                if review is not None:
+                    evidence = review.get("evidence")
+                    decision = review.get("decision")
+                    policy = report.get("gap_policy")
+                    if (
+                        review.get("version") != "gap-policy-review-v1"
+                        or review.get("status") != "published"
+                        or decision not in {"approved", "rejected"}
+                        or not isinstance(evidence, dict)
+                        or not isinstance(policy, dict)
+                        or evidence.get("report_sha256") != publication.sha256
+                        or evidence.get("gap_policy_sha256") != policy.get("sha256")
+                    ):
+                        return {
+                            "status": "invalid",
+                            "explanation": "The gap-policy review could not be verified.",
+                        }
+                    report_result["review"] = {
+                        "decision": decision,
+                        "decided_at": review.get("decided_at"),
+                        "reviewer": review.get("reviewer"),
+                        "note": review.get("note"),
+                        "publication": review_artifact.document(),
+                    }
+                    if decision == "approved":
+                        report_result.update(
+                            status="gap_policy_approved",
+                            explanation=(
+                                "The gap-safe policy was approved. A separate reviewed "
+                                "gap-aware selection engine is the next step."
+                            ),
+                            recommendation="Implement and validate the gap-aware selection engine.",
+                        )
+                    else:
+                        report_result.update(
+                            status="gap_policy_rejected",
+                            explanation="The gap-safe policy was rejected. Strategy research remains blocked.",
+                            recommendation="Choose a different data policy before strategy research.",
+                        )
+                elif review_artifact.status not in {"missing"}:
+                    return {
+                        "status": review_artifact.status,
+                        "explanation": "The gap-policy review could not be read. Check object storage.",
+                    }
+            return report_result
         if publication.status not in {"missing"}:
             return {
                 "status": publication.status,
@@ -786,6 +892,11 @@ class LiveDashboardSource:
                     "action": "Investigate the unavailable data source before relying on newer evidence.",
                     "runbook": "docs/runbooks/local-market-data-pipeline.md",
                 }
+        if research.get("status") == "gap_policy_approved":
+            return {
+                "action": "Implement and validate the gap-aware selection engine.",
+                "runbook": "docs/user_stories/active/0005-human-review-of-historical-gap-policy.md",
+            }
         if research.get("status") == "policy_review_required":
             return {
                 "action": "Review the gap-safe policy before strategy selection.",

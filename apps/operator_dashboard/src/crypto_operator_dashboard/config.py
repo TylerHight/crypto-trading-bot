@@ -42,6 +42,8 @@ class DashboardSettings:
     selection_manifest_prefix: str = "analytics/strategy_experiments/v1/selections/"
     evaluation_manifest_prefix: str = "analytics/strategy_experiments/v1/evaluations/"
     research_report_prefix: str = "analytics/strategy_experiments/v1/longer_research/reports/"
+    gap_aware_research_prefix: str = "analytics/strategy_experiments/v1/gap_aware_research/reports/"
+    gap_policy_review_prefix: str = "analytics/strategy_experiments/v1/gap_policy_reviews/reviews/"
     historical_manifest_prefix: str = "analytics/historical_candles/v1/manifests/"
     database_url: str = field(
         default="postgresql://paper_app:paper_app@127.0.0.1:5432/crypto_trading",
@@ -141,6 +143,14 @@ class DashboardSettings:
             research_report_prefix=os.getenv(
                 "OPERATOR_DASHBOARD_RESEARCH_REPORT_PREFIX",
                 "analytics/strategy_experiments/v1/longer_research/reports/",
+            ),
+            gap_aware_research_prefix=os.getenv(
+                "OPERATOR_DASHBOARD_GAP_AWARE_RESEARCH_PREFIX",
+                "analytics/strategy_experiments/v1/gap_aware_research/reports/",
+            ),
+            gap_policy_review_prefix=os.getenv(
+                "OPERATOR_DASHBOARD_GAP_POLICY_REVIEW_PREFIX",
+                "analytics/strategy_experiments/v1/gap_policy_reviews/reviews/",
             ),
             historical_manifest_prefix=os.getenv(
                 "OPERATOR_DASHBOARD_HISTORICAL_MANIFEST_PREFIX",

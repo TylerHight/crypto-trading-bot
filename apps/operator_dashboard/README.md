@@ -45,6 +45,7 @@ OPERATOR_DASHBOARD_S3_BUCKET
 OPERATOR_DASHBOARD_DATABASE_URL
 OPERATOR_DASHBOARD_HISTORICAL_MANIFEST_PREFIX
 OPERATOR_DASHBOARD_RESEARCH_REPORT_PREFIX
+OPERATOR_DASHBOARD_GAP_AWARE_RESEARCH_PREFIX
 OPERATOR_DASHBOARD_PILOT_PLAN
 ```
 
@@ -53,17 +54,19 @@ dashboard never renders the configured endpoint, credentials, or database URL.
 
 ## What the status means
 
-The top Research card prefers the latest longer-research report. **Not enough
-data** means the 90-day input check failed; prepare complete history before a new
-experiment. **No strategy selected** means none passed selection. **Test complete**
-shows the selected strategy and its net return versus buy-and-hold. Only a positive
-difference supports considering a paper trial. A saved research result does not
-become invalid simply because time has passed. Publication details stay collapsed.
+The top Research card prefers the latest gap-aware sealed report, then falls
+back to the older longer-research report. **No strategy selected** means none
+passed the fixed train/validation rule. **Segmented research complete** means a
+sealed winner was tested independently in each continuous source segment;
+that result is research-only and cannot start a paper trial. A saved research
+result does not become invalid simply because time has passed. Publication
+details stay collapsed.
 
-The underlying report is read from
-`analytics/strategy_experiments/v1/longer_research/reports/`. The dashboard reads its
-summary without scanning candle data. Older short-experiment results remain the
-fallback only when no longer-research publication exists.
+The underlying reports are read from
+`analytics/strategy_experiments/v1/gap_aware_research/reports/` and, if absent,
+`analytics/strategy_experiments/v1/longer_research/reports/`. The dashboard
+reads their summaries without scanning candle data. Older short-experiment
+results remain the fallback only when neither report exists.
 
 - `healthy` / `current`: the source responded recently enough for the configured
   freshness threshold.
