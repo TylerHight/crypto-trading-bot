@@ -85,6 +85,8 @@ def test_segment_runs_reset_state_cancel_terminal_orders_and_never_cross_gap(mon
     assert metrics["segment_count"] == 2
     assert not exclusions
     assert all(item["pending_decision_cancelled_at_segment_end"] for item in evidence)
+    assert all(item["chart"]["equity_points"] for item in evidence)
+    assert all(item["chart"]["trade_marker_total"] == 0 for item in evidence)
     assert all(item["source_segment"]["end"] <= second.start or item["source_segment"]["start"] >= second.start for item in evidence)
 
 

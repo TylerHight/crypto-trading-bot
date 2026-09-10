@@ -43,6 +43,7 @@ class DashboardSettings:
     evaluation_manifest_prefix: str = "analytics/strategy_experiments/v1/evaluations/"
     research_report_prefix: str = "analytics/strategy_experiments/v1/longer_research/reports/"
     gap_aware_research_prefix: str = "analytics/strategy_experiments/v1/gap_aware_research/reports/"
+    gap_aware_selection_prefix: str = "analytics/strategy_experiments/v1/gap_aware_research/selections/"
     gap_policy_review_prefix: str = "analytics/strategy_experiments/v1/gap_policy_reviews/reviews/"
     historical_manifest_prefix: str = "analytics/historical_candles/v1/manifests/"
     database_url: str = field(
@@ -147,6 +148,10 @@ class DashboardSettings:
             gap_aware_research_prefix=os.getenv(
                 "OPERATOR_DASHBOARD_GAP_AWARE_RESEARCH_PREFIX",
                 "analytics/strategy_experiments/v1/gap_aware_research/reports/",
+            ),
+            gap_aware_selection_prefix=os.getenv(
+                "OPERATOR_DASHBOARD_GAP_AWARE_SELECTION_PREFIX",
+                "analytics/strategy_experiments/v1/gap_aware_research/selections/",
             ),
             gap_policy_review_prefix=os.getenv(
                 "OPERATOR_DASHBOARD_GAP_POLICY_REVIEW_PREFIX",

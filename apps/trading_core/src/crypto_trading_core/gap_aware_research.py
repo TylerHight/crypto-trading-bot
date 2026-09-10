@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, TypeVar
 
 from crypto_trading_domain.backtest import Candle, InvalidBacktest, run_backtest, run_buy_and_hold
 
@@ -50,8 +50,11 @@ from crypto_trading_core.longer_research import (
 )
 from crypto_trading_core.storage import ObjectStorage, child_uri
 
-VERSION = "gap-aware-sealed-research-v1"
+VERSION = "gap-aware-sealed-research-v2"
 AGGREGATION_VERSION = "unweighted-valid-segment-mean-v1"
+MAX_EQUITY_POINTS = 240
+MAX_TRADE_MARKERS = 400
+Item = TypeVar("Item")
 
 
 def _utc(value: datetime) -> datetime:
@@ -186,6 +189,41 @@ def _metrics(results: list[Any]) -> dict[str, Any]:
     }
 
 
+def _sample(items: tuple[Item, ...], maximum: int) -> tuple[Item, ...]:
+    """Keep first/last points and evenly spaced evidence between them."""
+    if len(items) <= maximum:
+        return items
+    stride = max(1, (len(items) - 2) // (maximum - 2))
+    sampled = (*items[::stride],)
+    if sampled[-1] != items[-1]:
+        sampled = (*sampled, items[-1])
+    return sampled[: maximum - 1] + (items[-1],)
+
+
+def _chart_evidence(result: Any) -> dict[str, Any]:
+    return {
+        "equity_points": [
+            {
+                "time": item.window_start,
+                "equity": item.equity,
+                "drawdown": item.drawdown,
+                "position": item.position.value,
+            }
+            for item in _sample(result.equity_curve, MAX_EQUITY_POINTS)
+        ],
+        "trade_marker_total": len(result.fills),
+        "trade_markers": [
+            {
+                "time": item.fill_time,
+                "side": item.side.value,
+                "execution_price": item.execution_price,
+                "fee": item.fee,
+            }
+            for item in _sample(result.fills, MAX_TRADE_MARKERS)
+        ],
+    }
+
+
 def evaluate_candidate_segments(
     candidate: Candidate,
     segments: tuple[ExperimentRange, ...],
@@ -231,6 +269,7 @@ def evaluate_candidate_segments(
                 "evaluation_range": _range_dict(evaluation),
                 "strategy": asdict(strategy.summary),
                 "baseline": asdict(baseline.summary),
+                "chart": _chart_evidence(strategy),
                 "pending_decision_cancelled_at_segment_end": bool(
                     strategy.summary.unfilled_terminal_decisions
                 ),
@@ -337,7 +376,7 @@ def run_research(
     review = _approved_review(storage, review_uri=arguments.review, review_sha256=arguments.review_sha256, spec=spec)
     key = _sha(canonical_json_bytes({"version": VERSION, "spec": spec.canonical_sha256, "review": arguments.review_sha256}))
     registration = {"version": VERSION, "research_key": key, "spec_sha256": _sha(body), "review_sha256": arguments.review_sha256}
-    _publish(storage, child_uri(output, "registrations", spec.name + ".json"), registration)
+    _publish(storage, child_uri(output, "registrations", VERSION, spec.name + ".json"), registration)
     report_uri = child_uri(output, "reports", key, "manifest.json")
     existing = storage.try_read_bytes(report_uri)
     if existing is not None:

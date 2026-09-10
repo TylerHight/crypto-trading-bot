@@ -2,6 +2,15 @@
 
 ## Implementation status
 
+### Current decision — September 9, 2026
+
+This draft pilot must not be registered. The later, approved segmented
+historical run rejected all fixed SMA candidates at the train/validation gate,
+so there is no sealed winner or OOS result that could support this pilot. The
+draft and its earlier short evaluation remain historical evidence only. Story
+0007 in `docs/user_stories/backlog/` will formally retire this attempt and
+require a separate pre-registered hypothesis before any new pilot is considered.
+
 The software workflow is implemented and covered by accelerated tests. A real
 input lineage and sealed evaluation were prepared on 2026-09-03, but the pilot
 has **not** been registered: explicit operator approval and the real 30-day

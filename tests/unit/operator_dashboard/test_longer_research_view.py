@@ -3,7 +3,11 @@ import hashlib
 import pytest
 from crypto_operator_dashboard.config import DashboardSettings
 from crypto_operator_dashboard.sources import LiveDashboardSource
-from crypto_operator_dashboard.web import _operator_summary, _research_view
+from crypto_operator_dashboard.web import (
+    _operator_summary,
+    _research_view,
+    render_dashboard,
+)
 from test_sources import NOW, FakeS3, _body, _documents
 
 
@@ -64,7 +68,7 @@ def test_inconclusive_research_supersedes_old_results_and_is_visible_at_top():
     assert "Do not start a paper trial." in page
     assert "Prepare 90 days of BTC history" in page
     assert "sma-5-20" not in page
-    details = _research_view(research)
+    details = _research_view(research, evidence_only=True)
     assert "History coverage" in details
     assert "128700" in details
 
@@ -109,7 +113,7 @@ def test_gap_policy_review_is_visible_and_cannot_support_a_paper_trial():
     )
     assert "Policy review needed" in page
     assert "Review the gap-safe policy before strategy selection" in page
-    details = _research_view(research)
+    details = _research_view(research, evidence_only=True)
     assert "Gap-safe policy" in details
     assert "107517" in details
 
@@ -159,9 +163,108 @@ def test_dashboard_renders_gap_aware_result_as_research_only():
     assert research["status"] == "segmented_evaluated"
     assert research["paper_trial_supported"] is False
     assert research["segment_counts"] == {"train": 2, "validation": 1, "test": 2}
-    page = _research_view(research)
+    page = _research_view(research, evidence_only=True)
     assert "Source segments" in page
     assert "Each segment resets SMA" in page
+
+
+def test_dashboard_renders_verified_trade_and_account_value_charts():
+    evidence = {
+        "ranking": [
+            {
+                "candidate_id": "sma-5-20",
+                "validation_percentage_return": "-12.5",
+                "validation_maximum_drawdown": "0.30",
+            }
+        ],
+        "candidates": {
+            "sma-5-20": {
+                name: {
+                    "aggregate": {
+                        "segment_count": 1,
+                        "fill_count": 2,
+                        "total_fees": "4.00",
+                        "percentage_return": "-12.5",
+                        "maximum_drawdown": "0.30",
+                    },
+                    "segments": [
+                        {
+                            "chart": {
+                                "equity_points": [
+                                    {"time": "2026-09-01T00:00:00Z", "equity": "10000"},
+                                    {"time": "2026-09-01T00:01:00Z", "equity": "9500"},
+                                ],
+                                "trade_marker_total": 2,
+                                "trade_markers": [
+                                    {"time": "2026-09-01T00:00:00Z", "side": "BUY"},
+                                    {"time": "2026-09-01T00:01:00Z", "side": "SELL"},
+                                ],
+                            }
+                        }
+                    ],
+                }
+                for name in ("train", "validation")
+            }
+        },
+    }
+    selection = {"evidence": evidence, "test_prices_accessed": False}
+    selection_body = _body(selection)
+    selection_uri = "s3a://crypto-data/gap-aware/selections/result.json"
+    report = {
+        "version": "gap-aware-sealed-research-v2",
+        "status": "published",
+        "research_only": True,
+        "test_prices_accessed_before_selection": False,
+        "selection": {
+            "uri": selection_uri,
+            "sha256": hashlib.sha256(selection_body).hexdigest(),
+        },
+        "segments": {"train": [{}], "validation": [{}], "test": [{}]},
+        "summary": {
+            "status": "no_candidate",
+            "paper_trial_supported": False,
+            "recommendation": "Do not start a paper trial.",
+            "message": "No candidate passed.",
+        },
+    }
+    documents = _documents()
+    documents["gap-aware/reports/manifest.json"] = _body(report)
+    documents["gap-aware/selections/result.json"] = selection_body
+    source = LiveDashboardSource(
+        DashboardSettings(
+            gap_aware_research_prefix="gap-aware/reports/",
+            gap_aware_selection_prefix="gap-aware/selections/",
+        ),
+        s3_client=FakeS3(documents),
+    )
+
+    research = source._research_status(NOW)
+    page = render_dashboard({"research": research}, 30)
+
+    assert research["visualization"] == evidence
+    assert "Study results" in page
+    assert "Account value" in page
+    assert "research-trades-chart" in page
+    assert "trade-rows" in page
+    assert "research-segment" in page
+    assert "research-equity-chart" in page
+    assert "research-visualization" in page
+    source._s3_client.documents["gap-aware/selections/result.json"] = b"changed"
+    assert source._research_status(NOW)["status"] == "invalid"
+
+
+def test_no_candidate_result_sends_operator_to_the_visual_review():
+    action = LiveDashboardSource._next_action(
+        {"status": "healthy"},
+        {"status": "healthy"},
+        {"status": "healthy"},
+        {"status": "healthy"},
+        {"status": "not_registered"},
+        {"status": "no_candidate"},
+        {"status": "gaps_found"},
+    )
+
+    assert action["action"] == "Review the study charts, then retire or replace the rejected hypothesis."
 
 
 def test_corrupt_report_does_not_fall_back_to_old_result():

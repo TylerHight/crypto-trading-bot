@@ -100,3 +100,6 @@ correctly did not read test prices or produce an out-of-sample result.
 Focused trading-core and dashboard tests passed, including gap boundaries,
 short-segment exclusions, terminal pending-order cancellation, review tampering,
 selection/test isolation, and read-only dashboard rendering. Ruff passed.
+
+Story 0007 records the failed selection decision and prevents the obsolete
+paper-pilot draft from being used as if this result had selected a strategy.

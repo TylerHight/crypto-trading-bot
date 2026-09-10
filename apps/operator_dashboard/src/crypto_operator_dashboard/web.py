@@ -5,6 +5,7 @@ import json
 from collections.abc import Mapping
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -55,7 +56,7 @@ def _copyable(label: str, value: object) -> str:
     encoded = html.escape(text, quote=True)
     return (
         f'<div class="copyable"><span>{_escape(label)}</span><code>{escaped}</code>'
-        f'<button type="button" data-copy={encoded}>Copy</button></div>'
+        f'<button type="button" data-copy="{encoded}">Copy</button></div>'
     )
 
 
@@ -239,7 +240,49 @@ def _operator_summary(snapshot: Mapping[str, Any]) -> str:
     )
 
 
-def _research_view(research: Mapping[str, Any]) -> str:
+def _study_controls(research: Mapping[str, Any]) -> str:
+    visualization = research.get("visualization")
+    candidates = visualization.get("candidates", {}) if isinstance(visualization, Mapping) else {}
+    if not candidates:
+        return '<p class="muted">No chart data was published for this study.</p>'
+    options = "".join(
+        f'<option value="{_escape(candidate_id)}">{_escape(_candidate_name(candidate_id))}</option>'
+        for candidate_id in sorted(candidates)
+    )
+    return f"""<label>Strategy<select id="research-candidate">{options}</select></label>
+<label>Period<select id="research-range"><option value="train">Training</option><option value="validation" selected>Validation</option></select></label>
+<label>Data segment<select id="research-segment"></select></label>"""
+
+
+def _research_charts(research: Mapping[str, Any]) -> str:
+    visualization = research.get("visualization")
+    if not isinstance(visualization, Mapping) or not visualization.get("candidates"):
+        return ""
+    return """<div id="research-metrics" class="metrics"></div>
+<article class="card"><h3>Account value</h3>
+<p class="muted">Simulated money over time. Each line starts a new account after a data gap.</p>
+<div class="chart-scroll"><svg id="research-equity-chart" class="chart" role="img" aria-label="Separate simulated account-value lines"></svg></div>
+<p id="research-chart-summary" class="muted"></p>
+<details><summary>About this chart</summary><p id="equity-sampling" class="muted"></p></details></article>
+<article class="card"><h3>Strategy comparison</h3>
+<div class="chart-scroll"><svg id="research-comparison-chart" class="chart" role="img" aria-label="Candidate returns and drawdowns"></svg></div>
+<p class="muted">Return: gain or loss. Drawdown: largest drop from a peak. The dashed line is the study's 20% limit.</p></article>"""
+
+
+def _trades_view() -> str:
+    return """<h2>Trades</h2><p>Where the simulation bought and sold BTC. These are not real orders.</p>
+<article class="card"><h3>Buy and sell prices</h3>
+<p><span class="buy">▲ Buy</span> &nbsp; <span class="sell">▼ Sell</span> <span class="muted">· Hover or focus a marker for details.</span></p>
+<p id="trade-coverage" class="muted">No trade data was published for this study.</p>
+<div class="chart-controls"><label>Show<select id="trade-side"><option value="all">Buys and sells</option><option value="BUY">Buys only</option><option value="SELL">Sells only</option></select></label>
+<label>Find a trade<input id="trade-search" type="search" placeholder="Date (YYYY-MM-DD) or price"></label></div>
+<div class="chart-scroll"><svg id="research-trades-chart" class="chart" role="img" aria-label="Buy and sell execution prices over time"></svg></div>
+<div class="table-scroll"><table><caption class="sr-only">Published simulated trades</caption><thead><tr><th>Time (UTC)</th><th>Side</th><th>Price</th><th>Fee</th><th>Segment</th></tr></thead><tbody id="trade-rows"></tbody></table></div>
+<div class="pagination"><button id="trades-prev" disabled>Previous</button><span id="trade-page" aria-live="polite">No trades to display</span><button id="trades-next" disabled>Next</button></div>
+</article>"""
+
+
+def _research_view(research: Mapping[str, Any], *, evidence_only: bool = False) -> str:
     selection = research.get("selection")
     evaluation = research.get("evaluation")
     detail_cards = ""
@@ -284,7 +327,9 @@ def _research_view(research: Mapping[str, Any]) -> str:
                     "Missing candles": gap_policy.get("missing_candle_action"),
                     "Indicators": gap_policy.get("indicator_action"),
                     "Selection-valid minutes": (
-                        valid_minutes.get("selection") if isinstance(valid_minutes, Mapping) else None
+                        valid_minutes.get("selection")
+                        if isinstance(valid_minutes, Mapping)
+                        else None
                     ),
                     "Test-valid minutes": (
                         valid_minutes.get("test") if isinstance(valid_minutes, Mapping) else None
@@ -338,19 +383,30 @@ def _research_view(research: Mapping[str, Any]) -> str:
         "Buy-and-hold return": oos.get("buy_and_hold_return") if isinstance(oos, Mapping) else None,
         "Excess return": oos.get("excess_return") if isinstance(oos, Mapping) else None,
     }
-    details = (
-        '<details class="disclosure"><summary>Show research details and publication identities</summary>'
-        f'<div class="grid">{detail_cards}</div></details>'
-        if detail_cards
+    if evidence_only:
+        return (
+            f'<div class="grid">{detail_cards}</div>'
+            if detail_cards
+            else "<p>No evidence available.</p>"
+        )
+    comparison = (
+        '<article class="card"><h3>Final test results</h3>' + _details(summary) + "</article>"
+        if isinstance(oos, Mapping)
         else ""
     )
+    if research.get("status") == "no_candidate":
+        return (
+            '<article class="card"><h3>No strategy passed</h3>'
+            "<p>The strategies missed the study rules. No strategy advanced to the final test.</p>"
+            '<p class="muted">Next: review the losses below, then decide whether to retire or replace this strategy idea.</p></article>'
+            + _research_charts(research)
+        )
     return (
         f"<p>{_escape(research.get('explanation'))}</p>"
         f"<p>{_escape(research.get('recommendation', ''))}</p>"
         f"<p>Research status: {_status_badge(research.get('status'))}</p>"
-        '<article class="card research-summary"><h3>Out-of-sample comparison</h3>'
-        f"{_details(summary)}</article>"
-        f"{details}"
+        f"{comparison}"
+        f"{_research_charts(research)}"
     )
 
 
@@ -411,15 +467,21 @@ def render_dashboard(snapshot: Mapping[str, Any], refresh_seconds: int) -> str:
     draft_plan: Mapping[str, Any] = (
         draft_plan_value if isinstance(draft_plan_value, Mapping) else {}
     )
+    visualization = research.get("visualization")
+    chart_json = (
+        json.dumps(visualization, default=str, separators=(",", ":"))
+        if isinstance(visualization, Mapping)
+        else "{}"
+    )
+    chart_json = chart_json.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="{refresh_seconds}">
   <title>Crypto platform operator dashboard</title>
   <style>
-    :root {{ color-scheme: light dark; font-family: system-ui, sans-serif; }}
+    :root {{ color-scheme: dark; font-family: system-ui, sans-serif; }}
     body {{ background: #10151f; color: #e8edf5; margin: 0; }}
     main {{ margin: auto; max-width: 1200px; padding: 2rem; }}
     h1 {{ margin-bottom: .25rem; }} h2 {{ margin-top: 1.5rem; }}
@@ -439,25 +501,61 @@ def render_dashboard(snapshot: Mapping[str, Any], refresh_seconds: int) -> str:
     .disclosure {{ background: #1a2230; border: 1px solid #344258; border-radius: .6rem; margin-top: 1rem; padding: .8rem 1rem; }}
     .disclosure summary {{ cursor: pointer; font-weight: 650; }} .disclosure .grid {{ margin-top: 1rem; }}
     .status-historical {{ background: #254667; color: #cce9ff; }}
+    * {{ box-sizing: border-box; }} [hidden] {{ display: none !important; }}
+    main {{ max-width: 1280px; padding: 1.5rem 2rem; }}
+    h1 {{ font-size: 1.6rem; margin: 0; }} h3 {{ margin-top: 0; }}
+    p {{ line-height: 1.5; }} .card {{ margin: 1rem 0; min-width: 0; }}
+    .page-header {{ display: flex; align-items: center; justify-content: space-between; gap: 1rem; }}
+    .page-header p {{ margin: .3rem 0; }} .snapshot {{ text-align: right; font-size: .8rem; }}
+    button, select, input {{ font: inherit; padding: .6rem .8rem; border: 1px solid #42536a; border-radius: .4rem; background: #1a283b; color: #e8edf5; }}
+    button {{ cursor: pointer; margin: 0; }} button:disabled {{ opacity: .4; cursor: default; }}
+    :focus-visible {{ outline: 2px solid #69b6ff; outline-offset: 3px; }}
+    .tabs {{ display: flex; gap: .3rem; margin: 1.5rem 0; border-bottom: 1px solid #344258; overflow-x: auto; padding-bottom: .3rem; }}
+    .tabs button {{ background: transparent; border: 0; border-radius: .3rem .3rem 0 0; padding: .8rem 1.2rem; white-space: nowrap; }}
+    .tabs [aria-selected="true"] {{ background: #203956; color: #b8dcff; box-shadow: inset 0 -3px #69b6ff; }}
+    .chart-controls {{ display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }}
+    .chart-controls label {{ display: grid; gap: .4rem; font-size: .85rem; color: #aab6c7; }}
+    .chart-controls input {{ width: 260px; max-width: 100%; }}
+    .metrics {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1rem 0; }}
+    .metric {{ background: #1a2230; padding: 1rem; border: 1px solid #344258; border-radius: .6rem; }}
+    .metric span {{ display: block; color: #aab6c7; font-size: .85rem; }}
+    .metric strong {{ display: block; font-size: 1.7rem; margin-top: .5rem; }}
+    .chart-scroll, .table-scroll {{ overflow-x: auto; max-width: 100%; }}
+    #panel-trades .table-scroll {{ max-height: 360px; margin-top: 1rem; }}
+    #panel-trades thead {{ position: sticky; top: 0; background: #1a2230; }}
+    .chart {{ background: #10151f; border-radius: .4rem; display: block; width: 100%; min-width: 650px; }}
+    .trade-marker {{ cursor: crosshair; }} .trade-marker:hover, .trade-marker:focus {{ stroke: white; stroke-width: 3; }}
+    .buy {{ color: #6ee7b7; }} .sell {{ color: #ff8e9d; }}
+    .pagination {{ display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: 1rem; font-size: .85rem; }}
+    #chart-tooltip {{ position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); background: #263e5c; padding: .8rem 1rem; border: 1px solid #69b6ff; border-radius: .5rem; max-width: 95vw; z-index: 10; pointer-events: none; }}
+    summary {{ cursor: pointer; color: #b8dcff; }} .sr-only {{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }}
+    @media(max-width: 650px) {{ main {{ padding: 1rem; }} .page-header {{ display: block; }} .snapshot {{ text-align: left; margin-top: 1rem; }} .metrics {{ grid-template-columns: repeat(2, 1fr); gap: .5rem; }} .metric strong {{ font-size: 1.3rem; }} .tabs button {{ padding: .7rem; }} .grid {{ grid-template-columns: minmax(0, 1fr); }} dl.details {{ grid-template-columns: 1fr; }} }}
   </style>
 </head>
 <body>
   <main>
-    <h1>Crypto platform operator dashboard</h1>
-    <p class="muted">Read only. No real orders.</p>
-    <p class="muted">Updated: {_escape(snapshot.get("generated_at"))}. Refreshes every {refresh_seconds} seconds.</p>
-    {_operator_summary(snapshot)}
-    <details class="disclosure section-details"><summary>Pipeline details</summary>{_pipeline_table(pipeline_items)}</details>
-    <details class="disclosure section-details"><summary>Data details</summary><p class="muted">Old means the saved evidence is older than the freshness window. It may still be valid.</p><div class="grid">{"".join(_artifact_card(item) for item in artifacts)}</div></details>
-    <details class="disclosure section-details"><summary>Research details</summary>{_research_view(research)}</details>
-    <details class="disclosure section-details"><summary>Paper trial details</summary>{_pilot_view(pilot, draft_plan)}</details>
+    <header class="page-header"><div><h1>Research workspace</h1><p class="muted">Read only. No real orders.</p></div>
+    <div class="snapshot"><button id="refresh-dashboard">Refresh snapshot</button><p class="muted">Snapshot: {_escape(snapshot.get("generated_at"))}<br>Manual refresh · Your view stays put.</p></div></header>
+    <nav class="tabs" role="tablist" aria-label="Dashboard pages">
+      <button id="tab-research" role="tab" data-tab="research" aria-controls="panel-research" aria-selected="true">Research</button>
+      <button id="tab-trades" role="tab" data-tab="trades" aria-controls="panel-trades" aria-selected="false" tabindex="-1">Trades</button>
+      <button id="tab-system" role="tab" data-tab="system" aria-controls="panel-system" aria-selected="false" tabindex="-1">System</button>
+      <button id="tab-evidence" role="tab" data-tab="evidence" aria-controls="panel-evidence" aria-selected="false" tabindex="-1">Evidence</button>
+      <button id="tab-paper" role="tab" data-tab="paper" aria-controls="panel-paper" aria-selected="false" tabindex="-1">Paper trial</button>
+    </nav>
+    <div id="study-controls" class="chart-controls">{_study_controls(research)}</div>
+    <section id="panel-research" role="tabpanel" aria-labelledby="tab-research"><h2>Study results</h2>{_research_view(research)}</section>
+    <section id="panel-trades" role="tabpanel" aria-labelledby="tab-trades" hidden>{_trades_view()}</section>
+    <section id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>
+    {_operator_summary(snapshot)}<h2>Pipeline</h2><div class="table-scroll">{_pipeline_table(pipeline_items)}</div>
+    <h2>Data publications</h2><p class="muted">Stale means a file has not been updated recently. Saved research does not need to be fresh.</p><div class="grid">{"".join(_artifact_card(item) for item in artifacts)}</div></section>
+    <section id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence" hidden><h2>Study evidence</h2><p class="muted">Source files, approval records, and checksums behind these results.</p>{_research_view(research, evidence_only=True)}</section>
+    <section id="panel-paper" role="tabpanel" aria-labelledby="tab-paper" hidden><h2>Paper trial</h2>{_pilot_view(pilot, draft_plan)}</section>
+    <div id="chart-tooltip" role="status" hidden></div>
+    <noscript>This dashboard needs JavaScript for tabs and charts. The read-only snapshot is available at <a href="/api/status">/api/status</a>.</noscript>
   </main>
-  <script>
-    document.querySelectorAll('[data-copy]').forEach((button) => button.addEventListener('click', () => {{
-      navigator.clipboard?.writeText(button.dataset.copy || '');
-      button.textContent = 'Copied';
-    }}));
-  </script>
+  <script id="research-visualization" type="application/json">{chart_json}</script>
+  <script src="/assets/dashboard.js" defer></script>
 </body>
 </html>"""
 
@@ -497,12 +595,17 @@ def create_server(
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             path = urlparse(self.path).path
-            snapshot = service.snapshot()
+            if path == "/assets/dashboard.js":
+                body = Path(__file__).with_name("dashboard.js").read_bytes()
+                self._send(HTTPStatus.OK, "text/javascript; charset=utf-8", body)
+                return
             if path == "/":
+                snapshot = service.snapshot()
                 body = render_dashboard(snapshot, settings.refresh_seconds).encode("utf-8")
                 self._send(HTTPStatus.OK, "text/html; charset=utf-8", body)
                 return
             if path == "/api/status":
+                snapshot = service.snapshot()
                 body = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
                 self._send(HTTPStatus.OK, "application/json; charset=utf-8", body)
                 return

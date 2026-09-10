@@ -126,18 +126,44 @@ def test_dashboard_renders_the_not_registered_state_and_escapes_artifacts() -> N
     assert "Check the raw sink. It needs a new archive." in page
     assert "Live feed" in page
     assert "SMA 5/20: -0.01% vs 0.01%" in page
-    assert "Pipeline details" in page
-    assert "Data details" in page
-    assert "Research details" in page
-    assert "Paper trial details" in page
-    assert '<details class="disclosure section-details">' in page
-    assert "Out-of-sample comparison" in page
-    assert "Show research details and publication identities" in page
-    assert '<details class="disclosure">' in page
+    assert 'role="tablist"' in page
+    for name in ("research", "trades", "system", "evidence", "paper"):
+        assert f'aria-controls="panel-{name}"' in page
+        assert f'aria-labelledby="tab-{name}"' in page
+    assert 'http-equiv="refresh"' not in page
+    assert "Refresh snapshot" in page
+    assert "Final test results" in page
+    assert "Study evidence" in page
+    assert '<script src="/assets/dashboard.js" defer>' in page
     assert "Curated trades &lt;script&gt;" in page
     assert "Curated trades <script>" not in page
     assert document["pilot"]["status"] == "not_registered"
     assert source.calls == 2
+
+
+def test_dashboard_static_script_is_local_and_does_not_read_sources() -> None:
+    source = FakeSource()
+    with _server(source) as address:
+        with urlopen(address + "/assets/dashboard.js") as response:
+            script = response.read().decode("utf-8")
+            assert response.headers["Content-Type"].startswith("text/javascript")
+        with pytest.raises(HTTPError) as error:
+            urlopen(address + "/assets/../config.py")
+    assert error.value.code == 404
+    assert "trade-marker" in script
+    assert "sessionStorage" in script
+    assert "setInterval" not in script
+    assert source.calls == 0
+
+
+def test_embedded_chart_json_and_copy_values_are_escaped() -> None:
+    from crypto_operator_dashboard.web import _copyable, render_dashboard
+
+    attack = '</script><script>alert("bad")</script>'
+    page = render_dashboard({"research": {"visualization": {"label": attack}}}, 30)
+    assert attack not in page
+    assert "\\u003c/script\\u003e" in page
+    assert 'data-copy="a b &quot;c&quot;"' in _copyable("ID", 'a b "c"')
 
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])

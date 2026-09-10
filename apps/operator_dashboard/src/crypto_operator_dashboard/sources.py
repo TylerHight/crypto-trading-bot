@@ -293,6 +293,24 @@ class LiveDashboardSource:
             document,
         )
 
+    def _read_pinned_json(self, uri: object, digest: object) -> dict[str, Any] | None:
+        """Read a bounded selection document only when its immutable identity matches."""
+        prefix = f"s3a://{self.settings.s3_bucket}/{self.settings.gap_aware_selection_prefix.rstrip('/')}/"
+        if not isinstance(uri, str) or not isinstance(digest, str) or not uri.startswith(prefix):
+            return None
+        key = uri.removeprefix(f"s3a://{self.settings.s3_bucket}/")
+        try:
+            response = self._s3().get_object(Bucket=self.settings.s3_bucket, Key=key)
+            if int(response.get("ContentLength", 0)) > 1_000_000:
+                return None
+            body = response["Body"].read()
+            document = json.loads(body)
+        except Exception:  # noqa: BLE001 - optional chart evidence must fail closed.
+            return None
+        if hashlib.sha256(body).hexdigest() != digest or not isinstance(document, dict):
+            return None
+        return document
+
     def _raw_archive_status(self, now: datetime) -> dict[str, str | None]:
         try:
             item = self._latest_raw_object(now)
@@ -534,7 +552,10 @@ class LiveDashboardSource:
         if segmented is not None:
             summary = segmented.get("summary")
             if (
-                segmented.get("version") != "gap-aware-sealed-research-v1"
+                segmented.get("version") not in {
+                    "gap-aware-sealed-research-v1",
+                    "gap-aware-sealed-research-v2",
+                }
                 or segmented.get("status") != "published"
                 or segmented.get("research_only") is not True
                 or segmented.get("test_prices_accessed_before_selection") is not False
@@ -561,6 +582,30 @@ class LiveDashboardSource:
                 "research_only": True,
                 "oos": None,
             }
+            if segmented["version"] == "gap-aware-sealed-research-v2":
+                selection_ref = segmented.get("selection")
+                visual_selection = (
+                    self._read_pinned_json(selection_ref.get("uri"), selection_ref.get("sha256"))
+                    if isinstance(selection_ref, dict)
+                    else None
+                )
+                evidence = (
+                    visual_selection.get("evidence")
+                    if isinstance(visual_selection, dict)
+                    else None
+                )
+                if (
+                    not isinstance(visual_selection, dict)
+                    or not isinstance(evidence, dict)
+                    or not isinstance(evidence.get("candidates"), dict)
+                    or not isinstance(evidence.get("ranking"), list)
+                    or visual_selection.get("test_prices_accessed") is not False
+                ):
+                    return {
+                        "status": "invalid",
+                        "explanation": "The visual research evidence could not be verified.",
+                    }
+                segmented_result["visualization"] = evidence
             if summary["status"] == "segmented_evaluated":
                 try:
                     strategy_return = Decimal(str(summary["strategy_return"]))
@@ -901,6 +946,11 @@ class LiveDashboardSource:
             return {
                 "action": "Review the gap-safe policy before strategy selection.",
                 "runbook": "docs/user_stories/completed/0004-gap-safe-historical-strategy-research.md",
+            }
+        if research.get("status") == "no_candidate":
+            return {
+                "action": "Review the study charts, then retire or replace the rejected hypothesis.",
+                "runbook": "docs/user_stories/backlog/0007-research-decision-and-hypothesis-reset.md",
             }
         if history.get("status") == "ready":
             return {
