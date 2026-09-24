@@ -10,6 +10,7 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
     "boto3>=1.40,<2",
     "crypto-trading-domain",
+    "crypto-exchange-adapters",
     "duckdb>=1.4,<2",
     "pyarrow>=21,<24",
     "psycopg[binary]>=3.2,<4",
@@ -35,6 +36,10 @@ set-paper-session-state = "crypto_trading_core.set_paper_session_state:main"
 show-paper-session = "crypto_trading_core.show_paper_session:main"
 validate-backtest = "crypto_trading_core.validate_backtest:main"
 validate-strategy-experiment = "crypto_trading_core.validate_experiment:main"
+create-research-workspace = "crypto_trading_core.research_workspace:main"
+run-daily-momentum-study = "crypto_trading_core.daily_momentum:main"
+run-daily-breakout-study = "crypto_trading_core.daily_breakout:main"
+screen-historical-breakout = "crypto_trading_core.historical_breakout_screen:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/crypto_trading_core"]
@@ -45,6 +50,7 @@ packages = ["src/crypto_trading_core"]
 
 [tool.uv.sources]
 crypto-trading-domain = { workspace = true }
+crypto-exchange-adapters = { workspace = true }
 
 [tool.ruff]
 line-length = 100

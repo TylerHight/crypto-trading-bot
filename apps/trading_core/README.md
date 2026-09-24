@@ -1,5 +1,40 @@
 # Trading Core
 
+## Prospective daily breakout research
+
+The [September 24 protocol](../../docs/research/btc-usd-daily-breakout-protocol-2026-09-24.md)
+fixed one 20/10-day price-channel rule and a September 25, 2026 through March 23,
+2027 observation window. A [fixed six-year historical screen](../../docs/research/btc-usd-breakout-historical-screen-2026-09-24.md)
+then found large underperformance versus buy-and-hold and a drawdown above the
+declared limit. The study was retired before its prospective start, and its
+capture task was disabled. The [capture runbook](../../docs/runbooks/daily-breakout-study.md)
+now serves as a record of the registered but inactive workflow.
+
+## Daily momentum research
+
+The separate daily-candle study uses Coinbase Exchange daily OHLCV and the
+precommitted specification in
+[`btc-usd-daily-momentum-v1.json`](../../experiments/btc-usd-daily-momentum-v1.json).
+It selects from train and validation before requesting test prices. Its
+simulator makes decisions at the daily close and fills at the next daily open
+with configured fees and adverse slippage. It cannot place orders.
+
+The 7/28-day hypothesis is retired after its failed second interval. Preserve
+the frozen v1 specs and results; their dates are already exposed. The v2 engine
+rejects legacy selections and cached promotion flags before accessing new test
+prices. It requires positive training/validation returns and validation fills;
+the research gate additionally requires a completed test round trip, positive
+after-cost return, and the excess-return/drawdown thresholds at 1x and 2x costs.
+Buy-and-hold now uses the same multiplicative fee/slippage sizing as the strategy.
+
+New calculations and policy checks have separate v2 artifact identities. The
+existing v1 spec format remains readable; old artifacts are audit-only and are
+never rewritten as v2 evidence. All daily reports set `paper_trial_eligible=false`
+because the operational engine has no daily-strategy implementation. A passing
+`research_gate_passed` is therefore a research result, not execution permission.
+The [research review](../../docs/research/btc-usd-daily-momentum-review-2026-09-23.md)
+records the actual result and the separate decision against a paper pilot.
+
 ## Longer strategy research
 
 Run the fixed 90-day BTC experiment with `python -m crypto_trading_core.longer_research`.
@@ -119,6 +154,13 @@ On September 8 the real input had only **924 of 129,600 required BTC minutes** i
 the fixed window (926 BTC candles overall). The published result is inconclusive:
 **do not start a paper trial**. Prepare a complete historical publication before
 planning another experiment. The existing short SMA evaluation is preserved.
+
+## Query historical research in DuckDB
+
+Use the local read-only DuckDB workspace to query historical candles and
+published backtest artifacts directly from MinIO. It is designed for DBeaver
+and includes starter graph queries. See
+[the research-workspace runbook](../../docs/runbooks/research-workspace.md).
 
 ## Original backtest workflow
 

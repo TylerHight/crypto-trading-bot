@@ -1,0 +1,9 @@
+{
+  "plan_version": "historical-candles-v1",
+  "name": "btc-usd-medium-horizon-history-v1",
+  "source": "coinbase-exchange",
+  "symbol": "BTC-USD",
+  "start": "2026-01-22T00:00:00Z",
+  "end": "2026-09-19T00:00:00Z",
+  "warmup_minutes": 40319
+}

@@ -172,6 +172,8 @@ def test_rate_limit_retry_honors_bounded_retry_after() -> None:
     assert sleeps == [2]
     query = parse_qs(urlparse(transport.urls[-1]).query)
     assert query["limit"] == ["1000"]
+    assert query["start"] == [str(int(START.timestamp()))]
+    assert query["end"] == [str(int((START + timedelta(seconds=10)).timestamp()))]
 
 
 def test_request_cap_returns_an_unresolved_result() -> None:

@@ -54,6 +54,24 @@ The current result is `inconclusive`: 129,595 of 129,600 research minutes are
 present. Acquisition is complete, but backtesting remains blocked until a fixed
 gap-handling policy is defined and tested.
 
+For a pinned historical candle manifest, `audit-coinbase-candle-gaps` requests
+each declared missing interval from Coinbase's public trade endpoint. It writes
+the exact response bytes as base64 with SHA-256 hashes and reports which full
+minutes can be reconstructed from complete trade windows. It does not change
+the historical candle publication. Example:
+
+```powershell
+$env:PYTHONPATH='apps/historical_backfill/src;packages/exchange_adapters/src;packages/domain/src'
+$manifest='artifacts/historical_candles/medium_horizon_v1/manifests/969477ef7eb7d080ee08cfa21a3b9b47214694d4ff30e306fefe2fd2c5961f8c/manifest.json'
+$digest=(Get-FileHash $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+.venv311\Scripts\python.exe -m crypto_historical_backfill.audit_candle_gaps `
+  --manifest $manifest --manifest-sha256 $digest `
+  --output artifacts/historical_candles/gap_audits_v1
+```
+
+Exit 2 means at least one gap remains unresolved. A zero-trade response is not
+proof that Coinbase executed no trades; it is insufficient to create a candle.
+
 ## Coinbase trade reconciliation
 
 `reconcile-coinbase-trades` compares one explicit Coinbase product/time range

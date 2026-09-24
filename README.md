@@ -65,6 +65,9 @@ state. See the [operator dashboard guide](apps/operator_dashboard/README.md).
 ## Repository conventions
 
 - Store no credentials, account identifiers, or private market data in Git.
+- Keep generated research output under ignored `artifacts/` and local analytical
+  databases under ignored `analytics/workspaces/`; back up evidence separately.
+  Keep dataset/experiment specifications, fixtures, protocols, and `uv.lock` tracked.
 - Keep executable entry points thin and delegate behavior to testable modules.
 - Version externally visible schemas and test backward compatibility.
 - Make replay, backfill, and orchestration operations bounded and idempotent.

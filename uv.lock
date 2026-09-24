@@ -196,6 +196,7 @@ version = "0.1.0"
 source = { editable = "apps/trading_core" }
 dependencies = [
     { name = "boto3" },
+    { name = "crypto-exchange-adapters" },
     { name = "crypto-trading-domain" },
     { name = "duckdb" },
     { name = "psycopg", extra = ["binary"] },
@@ -206,6 +207,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.40,<2" },
+    { name = "crypto-exchange-adapters", editable = "packages/exchange_adapters" },
     { name = "crypto-trading-domain", editable = "packages/domain" },
     { name = "duckdb", specifier = ">=1.4,<2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },

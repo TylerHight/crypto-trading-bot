@@ -1,0 +1,25 @@
+{
+  "version": "daily-momentum-study-v1",
+  "name": "btc-usd-daily-momentum-v1",
+  "source": "coinbase-exchange",
+  "symbol": "BTC-USD",
+  "granularity_seconds": 86400,
+  "warmup_start": "2025-11-28T00:00:00Z",
+  "ranges": {
+    "train": {"start": "2026-01-22T00:00:00Z", "end": "2026-05-22T00:00:00Z"},
+    "validation": {"start": "2026-05-22T00:00:00Z", "end": "2026-06-21T00:00:00Z"},
+    "test": {"start": "2026-06-21T00:00:00Z", "end": "2026-07-21T00:00:00Z"}
+  },
+  "candidates": [
+    {"id": "sma-3-14", "fast_days": 3, "slow_days": 14},
+    {"id": "sma-7-28", "fast_days": 7, "slow_days": 28},
+    {"id": "sma-14-56", "fast_days": 14, "slow_days": 56}
+  ],
+  "starting_cash": "10000",
+  "fee_bps": "40",
+  "slippage_bps": "5",
+  "maximum_validation_drawdown": "0.25",
+  "minimum_train_fills": 1,
+  "minimum_test_excess_return_pct": "0",
+  "cost_multipliers": [1, 2, 3]
+}

@@ -20,3 +20,14 @@ dist/
 *.tfstate
 *.tfstate.*
 infra/compose/data/
+
+# Local analytical workspaces query MinIO/S3 data and may contain local credentials.
+analytics/workspaces/
+
+# Downloaded responses, sealed research runs, and local execution logs.
+# Keep specifications in datasets/ and experiments/ tracked.
+/artifacts/
+
+# Local scratch code and obsolete workstation notes (retain on disk).
+/scratch.py
+/note2.md

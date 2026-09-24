@@ -1,0 +1,28 @@
+{
+  "experiment_spec_version": "v1",
+  "name": "btc-usd-medium-horizon-momentum-v1",
+  "candle_manifest_uri": "artifacts/historical_candles/medium_horizon_v1/manifests/969477ef7eb7d080ee08cfa21a3b9b47214694d4ff30e306fefe2fd2c5961f8c/manifest.json",
+  "candle_manifest_sha256": "299e8867f16ed2816afc0f37cec295d384cb2909c3922fabea11b1ae26773806",
+  "gap_policy_uri": "experiments/btc-usd-medium-horizon-gap-policy-v1.json",
+  "gap_policy_sha256": "dc2eaf683b9c45ef06a34bae7389475b51e18283b78f181f6fc638b1dfb58914",
+  "exchange": "coinbase",
+  "symbol": "BTC-USD",
+  "starting_cash": "10000",
+  "fee_bps": "40",
+  "slippage_bps": "5",
+  "ranges": {
+    "train": {"start": "2026-01-22T00:00:00Z", "end": "2026-05-22T00:00:00Z"},
+    "validation": {"start": "2026-05-22T00:00:00Z", "end": "2026-06-21T00:00:00Z"},
+    "test": {"start": "2026-06-21T00:00:00Z", "end": "2026-07-21T00:00:00Z"}
+  },
+  "candidates": [
+    {"candidate_id": "sma-720-10080", "fast_period": 720, "slow_period": 10080},
+    {"candidate_id": "sma-1440-20160", "fast_period": 1440, "slow_period": 20160},
+    {"candidate_id": "sma-10080-40320", "fast_period": 10080, "slow_period": 40320}
+  ],
+  "selection_policy": {
+    "minimum_train_fills": 1,
+    "maximum_train_drawdown": "0.25",
+    "maximum_validation_drawdown": "0.25"
+  }
+}

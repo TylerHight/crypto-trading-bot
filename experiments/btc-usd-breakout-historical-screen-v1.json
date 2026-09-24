@@ -1,0 +1,14 @@
+{
+  "version": "daily-breakout-historical-screen-v1",
+  "name": "btc-usd-breakout-historical-screen-v1",
+  "study_spec_sha256": "41551c83ec1e42a5dcb4be61ad6ffc889afb171a94300245c27daa55d4e18084",
+  "source": "coinbase-exchange",
+  "symbol": "BTC-USD",
+  "granularity_seconds": 86400,
+  "warmup_start": "2019-12-12T00:00:00Z",
+  "start": "2020-01-01T00:00:00Z",
+  "end": "2026-01-01T00:00:00Z",
+  "request_days": 300,
+  "years": [2020, 2021, 2022, 2023, 2024, 2025],
+  "purpose": "Quick historical falsification of the already registered 20/10-day breakout rule, using fixed past calendar years. Exploratory evidence only. The prospective September 2026 to March 2027 study remains a separate future observation. No parameter tuning or deployment decision is authorized by this screen."
+}

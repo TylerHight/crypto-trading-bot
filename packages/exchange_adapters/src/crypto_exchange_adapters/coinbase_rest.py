@@ -236,8 +236,8 @@ class CoinbaseMarketTradesClient:
         query = urlencode(
             {
                 "limit": self._limit,
-                "start": f"{start_at.timestamp():.6f}",
-                "end": f"{end_at.timestamp():.6f}",
+                "start": f"{start_at.timestamp():.6f}".rstrip("0").rstrip("."),
+                "end": f"{end_at.timestamp():.6f}".rstrip("0").rstrip("."),
             }
         )
         url = f"{self._base_url}/products/{symbol}/ticker?{query}"

@@ -29,6 +29,7 @@ from .storage import ObjectStorage, StorageSettings, child_uri
 
 VERSION = "historical-candles-v1"
 DEFAULT_OUTPUT = "s3a://crypto-data/analytics/historical_candles/v1"
+MAXIMUM_WARMUP_MINUTES = 60 * 24 * 60
 DECIMAL = pa.decimal128(38, 18)
 SCHEMA = pa.schema(
     [
@@ -111,8 +112,12 @@ def load_plan(body: bytes) -> dict[str, Any]:
     if not MINUTE <= end - start <= timedelta(days=366) or end > datetime.now(UTC):
         raise ValueError("historical range must be closed and at most 366 days")
     warmup = plan["warmup_minutes"]
-    if isinstance(warmup, bool) or not isinstance(warmup, int) or not 0 <= warmup <= 10000:
-        raise ValueError("warmup must be 0..10000 minutes")
+    if (
+        isinstance(warmup, bool)
+        or not isinstance(warmup, int)
+        or not 0 <= warmup <= MAXIMUM_WARMUP_MINUTES
+    ):
+        raise ValueError(f"warmup must be 0..{MAXIMUM_WARMUP_MINUTES} minutes")
     return plan
 
 
@@ -170,7 +175,7 @@ def acquire(
             envelope = json.loads(cached)
             body = envelope["body"].encode("utf-8")
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, AttributeError) as error:
-            raise ValueError("cached source page is invalid") from error
+            raise ValueError(f"cached source page is invalid: {page_uri}") from error
         if (
             sha(body) != envelope["sha256"]
             or timestamp(envelope["start"]) != page_start

@@ -1,0 +1,3 @@
+# The prospective study pins exact bytes, including line endings.
+experiments/btc-usd-daily-breakout-v1.json -text
+experiments/btc-usd-breakout-historical-screen-v1.json -text

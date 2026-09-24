@@ -1,5 +1,7 @@
 .git
 .venv
+.venv*
+.env
 .mypy_cache
 .pytest_cache
 .ruff_cache
@@ -8,3 +10,7 @@ __pycache__
 *.py[cod]
 dist
 infra/compose/data
+artifacts
+analytics/workspaces
+scratch.py
+note2.md

@@ -1,0 +1,9 @@
+{
+  "version": "daily-momentum-forward-v1",
+  "selection_sha256": "8e851f9266d6c0c137dc99bb45526caec65f394d0efa27daf18607d2db51f15c",
+  "evaluation_sha256": "d3c16f3693369380712dc7a88e5c8539b2eee473223ec4dd6600083bb55c776c",
+  "start": "2026-07-21T00:00:00Z",
+  "end": "2026-09-19T00:00:00Z",
+  "candidate_id": "sma-7-28",
+  "cost_multipliers": [1, 2, 3]
+}

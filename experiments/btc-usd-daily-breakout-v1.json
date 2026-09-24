@@ -1,0 +1,25 @@
+{
+  "version": "daily-breakout-study-v1",
+  "name": "btc-usd-daily-breakout-v1",
+  "source": "coinbase-exchange",
+  "symbol": "BTC-USD",
+  "granularity_seconds": 86400,
+  "warmup_start": "2026-09-05T00:00:00Z",
+  "start": "2026-09-25T00:00:00Z",
+  "end": "2027-03-24T00:00:00Z",
+  "entry_days": 20,
+  "exit_days": 10,
+  "starting_cash": "10000",
+  "fee_bps": "40",
+  "slippage_bps": "5",
+  "cost_multipliers": [1, 2, 3],
+  "minimum_round_trips": 5,
+  "maximum_drawdown": "0.25",
+  "minimum_excess_return_pct": "0",
+  "settlement_delay_seconds": 3600,
+  "rationale": "Test whether a fixed price-channel entry and exit captures persistent BTC price moves after costs over a genuinely future interval. This is a new rule within the already-explored trend-following family, not an independent discovery or a replication of the cited futures research. The 20/10-day windows are design choices fixed without testing alternatives. The rejected SMA evidence does not support this hypothesis; no historical profitability is claimed.",
+  "sources": [
+    "https://www.aqr.com/Insights/Research/Journal-Article/Time-Series-Momentum",
+    "https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-candles"
+  ]
+}

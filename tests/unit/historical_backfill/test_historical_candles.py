@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
-from crypto_historical_backfill.historical_candles import acquire, canonical, load_plan
+from crypto_historical_backfill.historical_candles import (
+    MAXIMUM_WARMUP_MINUTES,
+    acquire,
+    canonical,
+    load_plan,
+)
 from crypto_historical_backfill.storage import ObjectStorage, StorageSettings
 
 START = datetime(2026, 6, 10, tzinfo=UTC)
@@ -82,3 +87,13 @@ def test_changed_cached_page_and_invalid_plan_are_rejected(tmp_path):
         acquire(plan(3), store=store, output=str(tmp_path / "out"), client=Client())
     with pytest.raises(ValueError):
         load_plan(b"{}")
+
+
+def test_plan_accepts_multi_week_warmup_but_retains_a_bounded_limit():
+    document = json.loads(plan().decode())
+    document["warmup_minutes"] = 40_319
+    assert load_plan(canonical(document))["warmup_minutes"] == 40_319
+
+    document["warmup_minutes"] = MAXIMUM_WARMUP_MINUTES + 1
+    with pytest.raises(ValueError, match="warmup"):
+        load_plan(canonical(document))
