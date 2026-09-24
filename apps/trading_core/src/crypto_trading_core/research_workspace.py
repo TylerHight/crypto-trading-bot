@@ -130,14 +130,25 @@ FROM research_data.backtest_fills
 ORDER BY backtest_run_id, fill_time;
 
 -- Account value through each complete published backtest
-SELECT backtest_run_id, point_time, equity, drawdown, position
+SELECT backtest_run_id, window_start AS point_time, equity, drawdown, position
 FROM research_data.backtest_equity
-ORDER BY backtest_run_id, point_time;
+ORDER BY backtest_run_id, window_start;
 
 -- Candidate comparison from the sealed selection publication
 SELECT *
 FROM research_data.candidate_results
 ORDER BY experiment_run_id, candidate_id;
+
+-- Follow one candidate result through its baseline comparison and published fills.
+SELECT r.candidate_id, r.range_name, r.percentage_return AS candidate_return,
+       baseline.percentage_return AS baseline_return,
+       run.backtest_run_id, fill.fill_time, fill.side, fill.execution_price
+FROM research_model.candidate_results r
+JOIN research_model.baseline_results baseline
+  USING (experiment_run_id, range_name)
+JOIN research_model.backtest_runs run USING (backtest_key)
+LEFT JOIN research_model.backtest_fills fill USING (backtest_run_id)
+ORDER BY r.candidate_id, r.range_name, fill.fill_time;
 
 -- Saved samples from the gap-aware study. These are not every simulated fill.
 SELECT candidate_id, period, segment_number, fill_time, side, execution_price, fee
@@ -208,6 +219,17 @@ def _create_views(
     connection.execute(
         f"""CREATE VIEW research_data.candles AS
         SELECT * FROM {_source_table(candles_uri, hive=True)}"""
+    )
+    backtest_root = settings.backtest_prefix.rstrip("/")
+    if backtest_root.endswith("/runs"):
+        backtest_root = backtest_root.removesuffix("/runs")
+    manifests = _quote(_s3_uri(child_uri(backtest_root, "manifests", "*", "manifest.json")))
+    connection.execute(
+        f"""CREATE VIEW research_data.backtest_manifests AS
+        SELECT filename AS manifest_file,
+               json_extract_string(json, '$.backtest_run_id') AS backtest_run_id,
+               json_extract_string(json, '$.backtest_key') AS backtest_key
+        FROM read_json_objects({manifests}, filename=true)"""
     )
     for name, suffix in (
         ("backtest_fills", "fills.parquet"),
@@ -319,56 +341,213 @@ def _create_views(
 
 
 def _create_relationship_model(connection: duckdb.DuckDBPyConnection) -> None:
-    """Store complete published result rows with DBeaver-visible relationships."""
+    """Materialize source rows with foreign keys supported by publication identity."""
 
     connection.execute("CREATE SCHEMA research_model")
-    for parent, key in (
-        ("backtest_runs", "backtest_run_id"),
-        ("experiment_runs", "experiment_run_id"),
-    ):
-        connection.execute(f"CREATE TABLE research_model.{parent} ({key} VARCHAR PRIMARY KEY)")
-        connection.execute(
-            f"INSERT INTO research_model.{parent} "
-            f"SELECT {key} FROM research_data.{parent} WHERE {key} IS NOT NULL AND {key} <> ''"
-        )
+    connection.execute(
+        """CREATE TABLE research_model.backtest_runs (
+            backtest_run_id VARCHAR PRIMARY KEY,
+            backtest_key VARCHAR UNIQUE,
+            manifest_file VARCHAR
+        )"""
+    )
+    connection.execute(
+        """INSERT INTO research_model.backtest_runs
+        SELECT r.backtest_run_id, m.backtest_key, m.manifest_file
+        FROM research_data.backtest_runs r
+        LEFT JOIN research_data.backtest_manifests m USING (backtest_run_id)
+        WHERE r.backtest_run_id IS NOT NULL AND r.backtest_run_id <> ''"""
+    )
+    connection.execute(
+        "CREATE TABLE research_model.experiment_runs (experiment_run_id VARCHAR PRIMARY KEY)"
+    )
+    connection.execute(
+        """INSERT INTO research_model.experiment_runs
+        SELECT experiment_run_id FROM research_data.experiment_runs
+        WHERE experiment_run_id IS NOT NULL AND experiment_run_id <> ''"""
+    )
 
-    for child, parent, key in (
-        ("backtest_fills", "backtest_runs", "backtest_run_id"),
-        ("backtest_equity", "backtest_runs", "backtest_run_id"),
-        ("backtest_decisions", "backtest_runs", "backtest_run_id"),
-        ("candidate_results", "experiment_runs", "experiment_run_id"),
-        ("baseline_results", "experiment_runs", "experiment_run_id"),
-        ("baseline_fills", "experiment_runs", "experiment_run_id"),
-        ("baseline_equity", "experiment_runs", "experiment_run_id"),
-    ):
-        columns = connection.execute(f"DESCRIBE SELECT * FROM research_data.{child}").fetchall()
+    def materialize(name: str, *, required: tuple[str, ...], constraints: tuple[str, ...]) -> None:
+        columns = connection.execute(f"DESCRIBE SELECT * FROM research_data.{name}").fetchall()
         names = [str(row[0]) for row in columns]
-        if key not in names or "source_row" in names:
-            raise InvalidBacktestInput(f"{child} has an incompatible source schema")
+        if "source_row" in names or any(key not in names for key in required):
+            raise InvalidBacktestInput(f"{name} has an incompatible source schema")
         definitions = ",\n                ".join(
-            f"{_identifier(str(name))} {column_type}"
-            + (" NOT NULL" if name == key else "")
-            for name, column_type, *_ in columns
+            f"{_identifier(str(column))} {column_type}"
+            + (" NOT NULL" if column in required else "")
+            for column, column_type, *_ in columns
         )
+        constraint_sql = ",\n                ".join(constraints)
         connection.execute(
-            f"""CREATE TABLE research_model.{child} (
+            f"""CREATE TABLE research_model.{name} (
                 source_row BIGINT PRIMARY KEY,
                 {definitions},
-                FOREIGN KEY ({_identifier(key)}) REFERENCES research_model.{parent}({key})
+                {constraint_sql}
             )"""
         )
         connection.execute(
-            f"""INSERT INTO research_model.{child}
-            SELECT row_number() OVER (), *
-            FROM research_data.{child}
-            WHERE {key} IS NOT NULL AND {key} <> ''"""
+            f"INSERT INTO research_model.{name} SELECT row_number() OVER (), * "
+            f"FROM research_data.{name}"
         )
-    for name in (
-        "candles",
-        "gap_aware_reports",
-        "gap_aware_trade_samples",
-        "gap_aware_equity_samples",
-    ):
+
+    materialize(
+        "backtest_decisions",
+        required=("backtest_run_id", "decision_time"),
+        constraints=(
+            "UNIQUE (backtest_run_id, decision_time)",
+            "FOREIGN KEY (backtest_run_id) REFERENCES research_model.backtest_runs(backtest_run_id)",
+        ),
+    )
+    materialize(
+        "backtest_fills",
+        required=("backtest_run_id", "decision_time"),
+        constraints=(
+            (
+                "FOREIGN KEY (backtest_run_id, decision_time) "
+                "REFERENCES research_model.backtest_decisions(backtest_run_id, decision_time)"
+            ),
+        ),
+    )
+    materialize(
+        "backtest_equity",
+        required=("backtest_run_id", "window_start"),
+        constraints=(
+            "FOREIGN KEY (backtest_run_id) REFERENCES research_model.backtest_runs(backtest_run_id)",
+        ),
+    )
+
+    connection.execute(
+        """CREATE TABLE research_model.candidates (
+            experiment_run_id VARCHAR NOT NULL,
+            candidate_id VARCHAR NOT NULL,
+            fast_period INTEGER,
+            slow_period INTEGER,
+            PRIMARY KEY (experiment_run_id, candidate_id),
+            FOREIGN KEY (experiment_run_id)
+                REFERENCES research_model.experiment_runs(experiment_run_id)
+        )"""
+    )
+    connection.execute(
+        """INSERT INTO research_model.candidates
+        SELECT DISTINCT experiment_run_id, candidate_id, fast_period, slow_period
+        FROM research_data.candidate_results"""
+    )
+    materialize(
+        "baseline_results",
+        required=("experiment_run_id", "range_name"),
+        constraints=(
+            "UNIQUE (experiment_run_id, range_name)",
+            (
+                "FOREIGN KEY (experiment_run_id) "
+                "REFERENCES research_model.experiment_runs(experiment_run_id)"
+            ),
+        ),
+    )
+    materialize(
+        "candidate_results",
+        required=("experiment_run_id", "candidate_id", "range_name", "backtest_key"),
+        constraints=(
+            "UNIQUE (experiment_run_id, candidate_id, range_name)",
+            (
+                "FOREIGN KEY (experiment_run_id, candidate_id) "
+                "REFERENCES research_model.candidates(experiment_run_id, candidate_id)"
+            ),
+            (
+                "FOREIGN KEY (experiment_run_id, range_name) "
+                "REFERENCES research_model.baseline_results(experiment_run_id, range_name)"
+            ),
+            ("FOREIGN KEY (backtest_key) REFERENCES research_model.backtest_runs(backtest_key)"),
+        ),
+    )
+    connection.execute(
+        """CREATE TABLE research_model.experiment_evaluations (
+            experiment_run_id VARCHAR PRIMARY KEY,
+            FOREIGN KEY (experiment_run_id)
+                REFERENCES research_model.experiment_runs(experiment_run_id)
+        )"""
+    )
+    connection.execute(
+        """INSERT INTO research_model.experiment_evaluations
+        SELECT DISTINCT experiment_run_id FROM (
+            SELECT experiment_run_id FROM research_data.baseline_fills
+            UNION ALL
+            SELECT experiment_run_id FROM research_data.baseline_equity
+        )"""
+    )
+    for name in ("baseline_fills", "baseline_equity"):
+        materialize(
+            name,
+            required=("experiment_run_id",),
+            constraints=(
+                (
+                    "FOREIGN KEY (experiment_run_id) "
+                    "REFERENCES research_model.experiment_evaluations(experiment_run_id)"
+                ),
+            ),
+        )
+
+    connection.execute(
+        "CREATE TABLE research_model.gap_aware_selections (selection_file VARCHAR PRIMARY KEY)"
+    )
+    connection.execute(
+        """INSERT INTO research_model.gap_aware_selections
+        SELECT DISTINCT selection_file FROM (
+            SELECT selection_file FROM research_data.gap_aware_trade_samples
+            UNION ALL
+            SELECT selection_file FROM research_data.gap_aware_equity_samples
+        )"""
+    )
+    connection.execute(
+        """CREATE TABLE research_model.gap_aware_candidates (
+            selection_file VARCHAR NOT NULL,
+            candidate_id VARCHAR NOT NULL,
+            PRIMARY KEY (selection_file, candidate_id),
+            FOREIGN KEY (selection_file)
+                REFERENCES research_model.gap_aware_selections(selection_file)
+        )"""
+    )
+    connection.execute(
+        """INSERT INTO research_model.gap_aware_candidates
+        SELECT DISTINCT selection_file, candidate_id FROM (
+            SELECT selection_file, candidate_id FROM research_data.gap_aware_trade_samples
+            UNION ALL
+            SELECT selection_file, candidate_id FROM research_data.gap_aware_equity_samples
+        )"""
+    )
+    connection.execute(
+        """CREATE TABLE research_model.gap_aware_segments (
+            selection_file VARCHAR NOT NULL,
+            candidate_id VARCHAR NOT NULL,
+            period VARCHAR NOT NULL,
+            segment_number INTEGER NOT NULL,
+            PRIMARY KEY (selection_file, candidate_id, period, segment_number),
+            FOREIGN KEY (selection_file, candidate_id)
+                REFERENCES research_model.gap_aware_candidates(selection_file, candidate_id)
+        )"""
+    )
+    connection.execute(
+        """INSERT INTO research_model.gap_aware_segments
+        SELECT DISTINCT selection_file, candidate_id, period, segment_number FROM (
+            SELECT selection_file, candidate_id, period, segment_number
+            FROM research_data.gap_aware_trade_samples
+            UNION ALL
+            SELECT selection_file, candidate_id, period, segment_number
+            FROM research_data.gap_aware_equity_samples
+        )"""
+    )
+    for name in ("gap_aware_trade_samples", "gap_aware_equity_samples"):
+        materialize(
+            name,
+            required=("selection_file", "candidate_id", "period", "segment_number"),
+            constraints=(
+                (
+                    "FOREIGN KEY (selection_file, candidate_id, period, segment_number) "
+                    "REFERENCES research_model.gap_aware_segments"
+                    "(selection_file, candidate_id, period, segment_number)"
+                ),
+            ),
+        )
+    for name in ("candles", "gap_aware_reports"):
         connection.execute(
             f"CREATE VIEW research_model.{name} AS SELECT * FROM research_data.{name}"
         )
@@ -377,7 +556,7 @@ def _create_relationship_model(connection: duckdb.DuckDBPyConnection) -> None:
 def create_workspace(
     settings: ResearchWorkspaceSettings, *, replace: bool = False
 ) -> dict[str, str]:
-    """Create a local metadata database whose views read immutable source data."""
+    """Create remote source views and a local snapshot with verified relationships."""
 
     path = settings.workspace_path.resolve()
     if path.exists() and not replace:
@@ -411,7 +590,7 @@ def create_workspace(
                 manifest_uri,
                 manifest_sha256,
                 candles_uri,
-                "Source views query Parquet directly. research_model stores complete result rows with run relationships for DBeaver diagrams. Gap-aware samples are bounded publications.",
+                "Source views query immutable publications directly. research_model is a relational snapshot with validated publication, decision, candidate, comparison, and sample relationships. Gap-aware samples are bounded publications.",
             ],
         )
     finally:
@@ -439,7 +618,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         default="analytics/workspaces/crypto_research.duckdb",
-        help="Local DuckDB file containing views, not copied market data.",
+        help="Local DuckDB file containing source views and a result snapshot.",
     )
     parser.add_argument(
         "--replace", action="store_true", help="Replace an existing local workspace."

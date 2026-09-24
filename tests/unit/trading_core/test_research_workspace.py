@@ -32,18 +32,41 @@ def _settings(root: Path) -> ResearchWorkspaceSettings:
         candles / "interval=1m" / "event_date=2026-06-10" / "part.parquet",
         [{"window_start": "2026-06-10 00:00:00", "close": 100.0}],
     )
-    _parquet(root / "backtests" / "run-a" / "fills.parquet", [{"side": "BUY"}])
-    _parquet(
-        root / "backtests" / "run-a" / "equity_curve.parquet", [{"equity": 10000.0}]
+    backtest_manifest = (
+        root / "backtests" / "manifests" / "candidate-key" / "manifest.json"
     )
-    _parquet(root / "backtests" / "run-a" / "decisions.parquet", [{"decision": "BUY"}])
+    backtest_manifest.parent.mkdir(parents=True, exist_ok=True)
+    backtest_manifest.write_text(
+        json.dumps({"backtest_run_id": "run-a", "backtest_key": "candidate-key"})
+    )
+    _parquet(
+        root / "backtests" / "run-a" / "fills.parquet",
+        [{"side": "BUY", "decision_time": "2026-06-10 00:00:00"}],
+    )
+    _parquet(
+        root / "backtests" / "run-a" / "equity_curve.parquet",
+        [{"equity": 10000.0, "window_start": "2026-06-10 00:00:00"}],
+    )
+    _parquet(
+        root / "backtests" / "run-a" / "decisions.parquet",
+        [{"decision": "BUY", "decision_time": "2026-06-10 00:00:00"}],
+    )
     _parquet(
         root / "experiments" / "run-a" / "selection" / "candidate_results.parquet",
-        [{"candidate_id": "sma-5-20", "percentage_return": -1.0}],
+        [
+            {
+                "candidate_id": "sma-5-20",
+                "fast_period": 5,
+                "slow_period": 20,
+                "range_name": "train",
+                "backtest_key": "candidate-key",
+                "percentage_return": -1.0,
+            }
+        ],
     )
     _parquet(
         root / "experiments" / "run-a" / "selection" / "baseline_results.parquet",
-        [{"percentage_return": 1.0}],
+        [{"range_name": "train", "percentage_return": 1.0}],
     )
     _parquet(
         root / "experiments" / "run-a" / "evaluation" / "baseline_fills.parquet",
@@ -147,10 +170,19 @@ def test_workspace_queries_source_parquet_and_published_samples(tmp_path: Path) 
         assert connection.execute(
             "SELECT count(*) FROM information_schema.table_constraints "
             "WHERE table_schema = 'research_model' AND constraint_type = 'FOREIGN KEY'"
-        ).fetchone() == (7,)
+        ).fetchone() == (15,)
         assert connection.execute(
             "SELECT backtest_run_id FROM research_model.backtest_fills"
         ).fetchone() == ("run-a",)
+        assert connection.execute(
+            "SELECT r.candidate_id, b.backtest_run_id, d.decision_time, f.side "
+            "FROM research_model.candidate_results r "
+            "JOIN research_model.backtest_runs b USING (backtest_key) "
+            "JOIN research_model.backtest_decisions d USING (backtest_run_id) "
+            "JOIN research_model.backtest_fills f "
+            "ON f.backtest_run_id = d.backtest_run_id "
+            "AND f.decision_time = d.decision_time"
+        ).fetchone() == ("sma-5-20", "run-a", "2026-06-10 00:00:00", "BUY")
         assert connection.execute(
             "SELECT candidate_id, side, execution_price, fee FROM research_data.gap_aware_trade_samples"
         ).fetchone() == ("sma-5-20", "BUY", 70000, 2.5)
