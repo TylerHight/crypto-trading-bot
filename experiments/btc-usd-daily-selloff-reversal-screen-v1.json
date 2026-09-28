@@ -1,0 +1,33 @@
+{
+  "version": "daily-mean-reversion-historical-screen-v1",
+  "name": "btc-usd-daily-selloff-reversal-screen-v1",
+  "source": "coinbase-exchange",
+  "symbol": "BTC-USD",
+  "granularity_seconds": 86400,
+  "source_warmup_start": "2019-12-12T00:00:00Z",
+  "source_end": "2026-01-01T00:00:00Z",
+  "source_report": {
+    "path": "artifacts/strategy_experiments/daily_breakout_historical_screen_v1/btc-usd-breakout-historical-screen-v1/eaeb8e63f9080d7462cc8c38c5daaa43a07bdcb9e64b9a69739374fcfa54a10e/report.json",
+    "sha256": "9e3d1515fdaedb826c0148088810b5519b331b19ac9c0e1a153095440706d6fc"
+  },
+  "ranges": {
+    "train": {"start": "2020-01-01T00:00:00Z", "end": "2023-01-01T00:00:00Z"},
+    "validation": {"start": "2023-01-01T00:00:00Z", "end": "2025-01-01T00:00:00Z"},
+    "reporting": {"start": "2025-01-01T00:00:00Z", "end": "2026-01-01T00:00:00Z"}
+  },
+  "candidates": [
+    {"id": "selloff-5-hold-1", "selloff_threshold_pct": "5", "holding_days": 1},
+    {"id": "selloff-5-hold-3", "selloff_threshold_pct": "5", "holding_days": 3},
+    {"id": "selloff-10-hold-1", "selloff_threshold_pct": "10", "holding_days": 1},
+    {"id": "selloff-10-hold-3", "selloff_threshold_pct": "10", "holding_days": 3}
+  ],
+  "starting_cash": "10000",
+  "fee_bps": "40",
+  "slippage_bps": "5",
+  "cost_multipliers": [1, 2, 3],
+  "minimum_train_entries": 5,
+  "minimum_validation_entries": 3,
+  "maximum_drawdown": "0.25",
+  "purpose": "Exploratory historical screen of a separate BTC daily selloff-reversal hypothesis: after a daily close at least the fixed threshold below the preceding close, buy at the following daily open and hold for the fixed number of completed daily sessions. Candidates, costs, selection gates, and calendar partitions are fixed in this specification before this screen is run. The source history was previously accessed for a different breakout screen, so the reporting interval is not new out-of-sample evidence and this screen cannot authorize paper or live trading.",
+  "rationale": "A sharp BTC daily selloff may be followed by a short recovery, but that proposition is uncertain and especially sensitive to costs. This small fixed grid tests the hypothesis without modifying the rejected SMA or breakout rules."
+}

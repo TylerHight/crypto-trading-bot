@@ -1,0 +1,29 @@
+{
+  "version": "daily-relative-strength-historical-screen-v1",
+  "name": "usd-spot-daily-relative-strength-screen-v1",
+  "source": "coinbase-exchange",
+  "products": ["BTC-USD", "ETH-USD", "LTC-USD", "BCH-USD"],
+  "granularity_seconds": 86400,
+  "warmup_start": "2019-09-10T00:00:00Z",
+  "source_end": "2026-01-01T00:00:00Z",
+  "request_days": 300,
+  "ranges": {
+    "train": {"start": "2020-01-01T00:00:00Z", "end": "2023-01-01T00:00:00Z"},
+    "validation": {"start": "2023-01-01T00:00:00Z", "end": "2025-01-01T00:00:00Z"},
+    "reporting": {"start": "2025-01-01T00:00:00Z", "end": "2026-01-01T00:00:00Z"}
+  },
+  "candidates": [
+    {"id": "weekly-top-1-14d", "lookback_days": 14, "rebalance_days": 7},
+    {"id": "weekly-top-1-56d", "lookback_days": 56, "rebalance_days": 7},
+    {"id": "weekly-top-1-112d", "lookback_days": 112, "rebalance_days": 7}
+  ],
+  "starting_cash": "10000",
+  "fee_bps": "40",
+  "slippage_bps": "5",
+  "cost_multipliers": [1, 2, 3],
+  "minimum_train_round_trips": 2,
+  "minimum_validation_round_trips": 1,
+  "maximum_drawdown": "0.50",
+  "purpose": "Immediate exploratory historical screen of a cross-asset relative-strength hypothesis. Once a week, measure each listed asset's fixed trailing close-to-close return through the prior closed day and hold the highest-return asset from the next daily open. Rules, universe, dates, costs, candidates, selection gates, and benchmark are fixed here before source acquisition. This historical screen can decide whether to reject the candidates now; it cannot authorize paper or live trading.",
+  "rationale": "Cross-asset ranking is distinct from the rejected BTC-only trend, breakout, and selloff-reversal rules. The small, long-lived Coinbase USD universe is fixed to avoid replacing missing asset history with a changing constituent list."
+}

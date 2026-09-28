@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -107,9 +108,13 @@ def decode_candles(body: bytes, start: datetime, end: datetime) -> tuple[DailyCa
     return ordered
 
 
-def fetch_candles(start: datetime, end: datetime) -> tuple[tuple[DailyCandle, ...], bytes]:
+def fetch_candles(
+    start: datetime, end: datetime, *, product_id: str = "BTC-USD"
+) -> tuple[tuple[DailyCandle, ...], bytes]:
     if not 1 <= (end - start).days <= 300:
         raise ValueError("daily source request must cover 1..300 days")
+    if not re.fullmatch(r"[A-Z0-9]{2,20}-USD", product_id):
+        raise ValueError("daily source product must be an uppercase USD spot pair")
     query = urlencode(
         {
             "granularity": 86400,
@@ -122,7 +127,7 @@ def fetch_candles(start: datetime, end: datetime) -> tuple[tuple[DailyCandle, ..
     transport = UrllibHttpTransport()
     for attempt in range(4):
         response = transport.request(
-            ENDPOINT + "?" + query,
+            ENDPOINT.replace("BTC-USD", product_id) + "?" + query,
             {"Accept": "application/json", "User-Agent": "crypto-daily-research/1.0"},
             15.0,
         )
